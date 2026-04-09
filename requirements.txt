@@ -1,0 +1,40 @@
+# Core ML
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.35.0
+accelerate>=0.30.0
+safetensors>=0.4.0
+sentencepiece>=0.2.0
+einops>=0.8.0
+timm>=1.0.0
+
+# Embeddings & Retrieval
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4
+rank_bm25>=0.2.2
+huggingface-hub>=0.24.0
+
+# PDF Processing
+pypdf>=3.0.0
+pdfplumber>=0.10.0
+
+# LLM / VLM
+openai>=1.6.0
+langchain>=0.1.0
+langchain-community>=0.0.10
+
+# Data & Viz
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+pillow>=10.0.0
+
+# Notebooks
+jupyter>=1.0.0
+ipywidgets>=8.0.0
+
+# Utilities
+tqdm>=4.65.0
+python-dotenv>=1.0.0
+rich>=13.0.0
