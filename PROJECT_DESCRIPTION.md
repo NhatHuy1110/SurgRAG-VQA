@@ -1,517 +1,852 @@
 # PROJECT DESCRIPTION
 
-## 1. Project in one sentence
+## 1. One-sentence summary
 
-This project explores a safety-aware Retrieval-Augmented Visual Question Answering (RAG-VQA) pipeline for laparoscopic cholecystectomy: given a surgical frame, the system retrieves relevant guideline evidence, asks a vision-language model to answer a question about the frame, and allows the model to explicitly defer when the image or evidence is not reliable enough for a safe answer.
+This project is a safety-aware Surgical Retrieval-Augmented Visual Question Answering (RAG-VQA) pipeline for laparoscopic cholecystectomy that combines laparoscopic frames, guideline-grounded retrieval, and a defer-capable vision-language model to answer only when the visual and textual evidence is strong enough.
 
-## 2. What the project is trying to achieve
+## 2. What the project is actually trying to do
 
-The repository is not just a generic VQA demo. It is a feasibility spike for a surgical AI workflow with three tightly connected goals:
+The repository is not a generic medical VQA demo and not only a retrieval experiment. The current codebase is trying to answer a more specific research question:
 
-1. Ground image-based reasoning in surgical knowledge rather than relying on pure visual pattern matching.
-2. Support clinically relevant question types such as anatomy landmarks, safety verification, workflow phase, and risk/pitfall recognition.
-3. Add a safety-first `DEFER` mechanism so the system can refuse to answer when anatomy is unclear, visibility is poor, or retrieved evidence is insufficient.
+> Can a surgical AI assistant answer clinically motivated questions about a laparoscopic frame more safely when its answer is grounded in retrieved surgical evidence and when it is explicitly allowed to defer?
 
-In practical terms, the project is testing whether a surgical assistant can combine:
+That research question is reflected in three design decisions that appear consistently across the source code:
 
-- visual input from laparoscopic frames,
-- textual evidence from surgical guidelines and anatomy references,
-- and a structured answer/defer policy
+1. The system is image-conditioned.
+   It starts from a laparoscopic frame rather than a purely text-only question.
 
-to produce safer answers than a plain image-only model.
+2. The system is retrieval-grounded.
+   It does not trust the VLM to answer from image priors alone. It first retrieves evidence from curated surgical documents and anatomy references.
 
-## 3. The big picture workflow
+3. The system is safety-aware.
+   The VLM is instructed to return `DEFER` when anatomy is unclear, the image quality is poor, or the retrieved evidence is insufficient or contradictory.
 
-The codebase is organized around the following end-to-end workflow:
+In other words, the project is exploring whether surgical frame understanding becomes more clinically useful when it is treated as a grounded decision-support problem instead of a plain captioning or pure recognition problem.
 
-1. Raw laparoscopic frames and masks are collected from the CholecSeg8k-style source data in `data/cholec_raw/`.
-2. A frame selection pipeline chooses a curated subset of frames, assigns difficulty, proposes question types, and marks some frames as should-defer cases.
-3. Annotation generation scripts turn that frame blueprint into question files and retrieval-evaluation files.
-4. A corpus builder parses guideline PDFs in `docs/raw/`, cleans the text, chunks it, and writes a structured retrieval corpus to `docs/chunks/chunks_v2.jsonl`.
-5. A retrieval module uses BM25 or hybrid BM25+dense retrieval to find the most relevant evidence chunks for each question.
-6. A VLM pipeline combines the frame, the question, and the retrieved evidence into a prompt and asks either:
-   - an OpenAI vision model,
-   - a local Hugging Face VLM,
-   - or a mock mode with no VLM call.
-7. The raw answer is parsed into a structured format with:
+## 3. High-level workflow of the current codebase
+
+The code in the repository implements the following end-to-end workflow:
+
+1. A curated subset of surgical frames is stored in `data/frames_v3/`.
+2. A blueprint and frame metadata are converted into task-ready annotations in `data/annotations/questions_v3.json` and `data/annotations/retrieval_eval_v3.json`.
+3. A curated surgical knowledge corpus is built from PDFs in `docs/raw/`.
+4. The corpus builder produces a structured chunk file at `docs/chunks/chunks_v3.jsonl`.
+5. The retrieval module indexes those chunks and retrieves parent-expanded evidence for each question.
+6. The RAG-VQA pipeline combines:
+   - the frame,
+   - the question,
+   - the retrieved evidence,
+   - and a safety-oriented system prompt
+   and then calls either a local Hugging Face VLM, an OpenAI model, or a mock mode.
+7. The raw model response is parsed into a structured result with fields such as:
    - answer text,
    - confidence,
-   - defer flag.
-8. An evaluation script summarizes defer behavior, answer/defer counts, latency, and per-question outcomes.
+   - defer flag,
+   - retrieved chunk IDs,
+   - evidence-card metadata,
+   - latency,
+   - and error state if the run failed.
+8. The evaluation script computes defer-related metrics, confidence distribution, question-type breakdowns, latency, and per-question summaries.
 
-## 4. Core problem formulation
+This architecture means the project is not only about obtaining an answer. It is also about:
 
-The working task is effectively:
+- evidence provenance,
+- traceable retrieval,
+- calibrated abstention behavior,
+- and structured output for later analysis.
 
-> Given a laparoscopic image frame and a clinically motivated question, retrieve relevant surgical knowledge and answer only when it is safe to do so.
+## 4. Current project state: what version is live now
 
-This makes the project different from standard medical VQA in two important ways:
+The real working state of the repository is centered on the `v3` setup, not the older `v1` or `v2` experiments.
 
-- It is retrieval-augmented, so textual evidence is part of the reasoning chain.
-- It is defer-aware, so abstention is treated as a first-class behavior instead of a failure mode.
-
-## 5. Main folders and what they contain
-
-### `data/`
-
-This is the main data area. It contains both raw and processed image-related assets.
-
-- `data/cholec_raw/`
-  Raw source laparoscopic data, organized by video and frame folders. The files include original endoscopic frames and mask variants such as color masks and watershed masks.
-
-- `data/frames_v3/`
-  The curated frame subset currently used by the project. This folder contains:
-  - `frame_001.png` through `frame_100.png`
-  - corresponding `_mask` files
-  - `frame_metadata.json`
-  - `question_blueprint_v3.json`
-  - `selection_summary.json`
-  - `validation_report.json`
-
-- `data/annotations/`
-  Generated task annotations used by the pipeline:
-  - `questions_v3.json`
-  - `retrieval_eval_v3.json`
-  There are also older `v1` files kept for previous experiments.
-
-### `docs/`
-
-This folder contains the knowledge source used for retrieval.
-
-- `docs/raw/`
-  PDF documents such as:
-  - SAGES safe cholecystectomy guideline
-  - Tokyo Guidelines 2018 safe steps
-  - WSES bile duct injury guideline
-  - CVS review
-  - Rouviere's sulcus article
-  - WHO surgical safety checklist
-  - CholecSeg8k class definitions
-
-- `docs/chunks/`
-  Prebuilt chunk files:
-  - `chunks_v1.jsonl`
-  - `chunks_v2.jsonl`
-
-These chunks are the retrieval corpus consumed by the retriever.
-
-### `scripts/`
-
-This is the main implementation folder. It contains the frame selection logic, corpus building, retrieval, pipeline execution, model download utilities, and evaluation.
-
-### `results/`
-
-This contains pipeline outputs. Currently the main file is:
-
-- `results/spike_results_v3.json`
-
-The folder is intended to also hold evaluation outputs such as markdown reports and metrics JSON.
-
-### `notebooks/`
-
-This currently contains `spike_analysis.ipynb`, likely used for exploratory analysis or inspection during development.
-
-## 6. Current experimental dataset state
-
-The current project state is centered on the `v3` setup:
+The key active artifacts are:
 
 - frames: `data/frames_v3/`
 - questions: `data/annotations/questions_v3.json`
-- retrieval eval: `data/annotations/retrieval_eval_v3.json`
-- output results: `results/spike_results_v3.json`
+- retrieval eval set: `data/annotations/retrieval_eval_v3.json`
+- retrieval corpus: `docs/chunks/chunks_v3.jsonl`
+- main result file: `results/spike_results_v3.json`
 
-The selected frame set is already balanced according to `data/frames_v3/selection_summary.json`:
+The important scripts now are:
 
-- 100 selected frames total
-- 15 recognition questions
-- 20 workflow phase questions
-- 25 anatomy landmark questions
-- 25 safety verification questions
-- 15 risk/pitfall questions
-- 30 easy, 40 medium, 30 hard cases
-- 25 should-defer cases
-- frames drawn from 17 videos
+- `scripts/build_corpus_v3.py`
+- `scripts/generate_annotations_v3.py`
+- `scripts/retrieval_v3.py`
+- `scripts/rag_vqa_pipeline.py`
+- `scripts/evaluate.py`
+- `scripts/download_hf_models.py`
+- `scripts/config.py`
 
-This means the repository already contains a reasonably structured benchmark-like subset rather than a random sample of images.
+There are still some legacy scripts in the repo such as `build_corpus.py`, `build_corpus_v2.py`, `retrieval.py`, and some older helper scripts, but the current code path for the main experiment is the `v3` stack above.
 
-## 7. How frame selection works
+## 5. Main folders and their real role in the project
 
-The frame selection pipeline is implemented in the large script currently stored as `scripts/frames_selection_v2.py`, although the script header describes it as a `v3` selector.
+### `data/`
 
-This script is one of the most important pieces in the repo because it creates the foundation for the downstream evaluation set.
+This is the main data workspace for frame-based experiments.
 
-### What it does
+- `data/cholec_raw/`
+  Stores the original raw surgical image data source used earlier in the pipeline. This is the raw reservoir from which curated subsets can be generated.
 
-It scans raw frame folders and uses both image content and mask-derived semantics to build candidate metadata for each frame.
+- `data/frames_v3/`
+  Stores the current curated frame subset used by the experiment.
+  Based on the scripts and surrounding files, this folder is intended to contain:
+  - selected frame images,
+  - frame metadata,
+  - a blueprint describing question type, difficulty, and defer labeling.
 
-### Key ideas in the selector
+- `data/annotations/`
+  Stores generated annotations that are used directly by retrieval and VQA:
+  - `questions_v3.json`
+  - `retrieval_eval_v3.json`
 
-- It reads watershed masks instead of guessing class colors.
-- It maps segmentation IDs to semantic classes such as liver, gallbladder, cystic duct, grasper, blood, and hepatic vein.
-- It computes visual quality signals such as brightness, contrast, sharpness, edge density, and specular reflection.
-- It infers frame difficulty (`easy`, `medium`, `hard`).
-- It scores each frame against target question types:
-  - `recognition`
-  - `workflow_phase`
-  - `anatomy_landmark`
-  - `safety_verification`
-  - `risk_pitfall`
-- It estimates whether the frame should be a defer case.
-- It enforces diversity constraints:
-  - max frames per video,
-  - minimum temporal gap within the same video,
-  - near-duplicate filtering using perceptual hash.
-- It saves:
-  - copied frame images,
-  - copied masks,
-  - metadata,
-  - a question blueprint,
-  - selection summary,
-  - validation report.
+### `docs/`
 
-### Why this matters
+This is the retrieval knowledge area.
 
-The project is not manually annotating from scratch. Instead, it creates a structured scaffold that mixes automatic frame mining with human-review-ready question drafting. That makes the project closer to a scalable dataset-building pipeline than a one-off demo.
+- `docs/raw/`
+  Contains the source medical documents that define the retrieval corpus.
+  The current `config.py` manifest shows the project is built around these document groups:
+  - SAGES Safe Cholecystectomy guideline
+  - Tokyo Guidelines 2018 safe steps
+  - WSES bile duct injury guideline
+  - CVS review
+  - Rouviere's sulcus anatomy review
+  - CholecSeg8k class definitions
+  - WHO surgical safety checklist
 
-## 8. How question and retrieval annotations are generated
+- `docs/chunks/`
+  Contains prebuilt chunk corpora.
+  The active output for the current system is `chunks_v3.jsonl`.
 
-The script `scripts/generate_annotations_v3.py` reads:
+### `scripts/`
+
+This folder contains the implementation of the full pipeline:
+
+- corpus construction
+- annotation generation
+- retrieval
+- VLM execution
+- evaluation
+- orchestration
+- model pre-download
+
+### `results/`
+
+Stores runtime outputs, including:
+
+- `spike_results_v3.json`
+- evaluation outputs generated by `evaluate.py`
+- mock retrieval outputs when running in mock mode
+
+### `notebooks/`
+
+Used for exploratory inspection and analysis outside the scripted pipeline.
+
+## 6. Configuration system and runtime control
+
+The central runtime configuration is in `scripts/config.py`.
+
+The configuration file does four important jobs:
+
+1. It defines canonical project paths.
+   This includes frames, annotations, raw docs, chunk files, and result files.
+
+2. It declares the retrieval corpus manifest.
+   Each document has metadata such as:
+   - `doc_id`
+   - `doc_title`
+   - `source_type`
+   - `trust_tier`
+   - `collection`
+   - `priority`
+   - `chunk_strategy`
+   - `chunk_size`
+   - `tags_hint`
+
+3. It defines retrieval defaults.
+   These include:
+   - `DENSE_MODEL_NAME`
+   - `USE_RERANKER`
+   - `RERANKER_MODEL_NAME`
+   - `RERANK_TOP_N`
+   - `HYBRID_ALPHA`
+   - `RETRIEVAL_TOP_K`
+   - `RETRIEVAL_MODE`
+   - `HF_CACHE_DIR`
+   - `HF_LOCAL_FILES_ONLY`
+
+4. It defines VLM behavior.
+   These include:
+   - `VLM_PROVIDER`
+   - `OPENAI_VLM_MODEL`
+   - `LOCAL_VLM_MODEL`
+   - `LOCAL_VLM_MAX_NEW_TOKENS`
+   - `VLM_MAX_TOKENS`
+   - `VLM_TEMPERATURE`
+
+The current default local model in code is:
+
+```env
+LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
+```
+
+This means the present codebase is optimized around a local Hugging Face VLM workflow rather than the older Florence-specific branch that was previously experimented with.
+
+## 7. What `generate_annotations_v3.py` is doing
+
+The annotation generation script is more than a file converter. It turns frame-level metadata into structured VQA tasks.
+
+It reads:
 
 - `data/frames_v3/question_blueprint_v3.json`
 - `data/frames_v3/frame_metadata.json`
 
-and produces:
+and writes:
 
 - `data/annotations/questions_v3.json`
 - `data/annotations/retrieval_eval_v3.json`
 
-### `questions_v3.json`
+The script currently encodes a specific task ontology with five question types:
 
-Each question entry includes:
+1. `recognition`
+2. `workflow_phase`
+3. `anatomy_landmark`
+4. `safety_verification`
+5. `risk_pitfall`
 
-- `qid`
-- selected frame filename
-- natural-language question
-- question type
-- difficulty
-- should-defer flag
-- draft gold answer
-- notes for manual review
-- source frame metadata
-- detected classes
+For each frame/question item, it constructs:
 
-The gold answers are currently scaffolded, not definitive expert-validated labels. The script explicitly marks annotations as:
+- a question phrasing,
+- a difficulty label,
+- a `should_defer` flag,
+- a gold-answer stub,
+- notes containing upstream scoring context,
+- class detections,
+- and metadata such as source frame, video ID, and frame index.
 
-`ready_run_needs_expert_review`
+This is important because the retrieval and RAG pipeline are not operating on generic free-form VQA. They are operating on a deliberately structured question space that tries to reflect clinically relevant reasoning categories.
 
-That is an important clue about project maturity: the benchmark is semi-automatic and still expects expert review.
+The retrieval-eval output also contains:
 
-### `retrieval_eval_v3.json`
-
-This file is used to test retrieval quality. For each question, it stores:
-
-- the question text,
-- a small set of relevant keywords,
-- a minimum acceptable substring that should appear in a retrieved chunk,
+- relevant keywords,
+- a minimum acceptable chunk needle,
 - expected collections,
-- question type and difficulty,
-- annotation status.
+- difficulty,
+- and defer status.
 
-So retrieval evaluation is currently lightweight and heuristic, based on containment checks rather than deep human relevance judgments.
+That means the eval set is already aligned with the retrieval design, not just with the final VLM answer stage.
 
-## 9. How the text corpus is built
+## 8. What `build_corpus_v3.py` is doing and why it matters
 
-The main corpus builder is `scripts/build_corpus_v2.py`.
+`build_corpus_v3.py` is one of the most technically important parts of the repository because it determines the quality of the evidence the VLM will see.
 
-### Inputs
+This script builds `docs/chunks/chunks_v3.jsonl` and introduces several substantial upgrades over earlier versions.
 
-It reads raw PDF or text files from `docs/raw/`.
+### 8.1 Core responsibilities
 
-### Processing stages
+The script:
 
-1. Extract text using `pypdf`, with fallback to `pdfplumber` when extraction quality is poor.
-2. Clean the text aggressively:
-   - remove junk lines,
-   - remove page numbers and headers/footers,
-   - remove copyright and URL noise,
-   - truncate at references sections.
-3. Detect sections and split content semantically.
-4. Apply source-specific chunking strategies such as:
-   - `section_aware`
-   - `paragraph`
-   - `step_based`
-   - `lexicon`
-5. Enrich each chunk with metadata:
-   - document ID and title
-   - source type
-   - trust tier
-   - collection
-   - section title
-   - chunk type
-   - anatomy/action/instrument/risk tags
-   - operative phase scope
-   - character length
-6. Write one JSON object per line into `docs/chunks/chunks_v2.jsonl`.
+- reads source documents from `docs/raw/`
+- extracts page-level text from PDFs
+- cleans noisy extraction artifacts
+- detects sections and heading structure
+- chunks text into parent and child units
+- links children to parents
+- extracts semantic tags
+- builds contextualized retrieval text
+- creates section and document summaries
+- validates parent-child integrity
+- writes the final v3 corpus
 
-### Knowledge design
+### 8.2 PDF extraction strategy
 
-The corpus is not treated as a flat bag of PDFs. `scripts/config.py` defines a document manifest with domain-specific structure:
+The script tries `pypdf` first and then falls back to `pdfplumber` if:
 
-- core safe cholecystectomy guidelines
-- complication management guidelines
-- anatomy and landmark reviews
-- visual ontology references
-- general surgical safety checklist material
+- extraction fails,
+- the text is too short,
+- or the extracted text looks garbled.
 
-Each document has metadata such as:
+This is a practical design choice for medical PDFs because guideline documents often vary in layout quality and encoding.
 
-- `trust_tier`
-- `collection`
-- `priority`
-- `chunk_strategy`
-- `tags_hint`
+### 8.3 Mojibake normalization
 
-This shows that the project is trying to encode source quality and surgical role directly into retrieval.
+The corpus builder includes explicit mojibake normalization logic.
 
-## 10. How retrieval works
+This is significant because PDF extraction often produces broken punctuation, quotation marks, or double-encoded characters. The script attempts to normalize those artifacts before chunking and indexing.
 
-Retrieval is implemented in `scripts/retrieval.py` through `SurgicalRetrieverV2`.
+### 8.4 Front-matter and junk removal
 
-### Retrieval modes
+The text cleaner is not just removing blank lines.
+It explicitly tries to remove:
 
-- `bm25_only`
-- `hybrid`
+- page numbers
+- downloads/copyright boilerplate
+- DOI lines
+- URL lines
+- reference-heavy blocks
+- front matter such as author and affiliation blocks
+- table-of-contents-like material
 
-### Retrieval pipeline
+This improves retrieval quality because otherwise BM25 and dense retrieval can latch onto useless but frequent terms from article metadata rather than surgical content.
 
-1. Load all chunks from the JSONL corpus.
-2. Build a BM25 index over chunk text.
-3. Optionally build a dense index using:
-   - `sentence-transformers`
-   - FAISS
-4. Retrieve candidates with sparse and dense search.
-5. Normalize and combine scores using a weighted hybrid formula.
-6. Apply collection-aware boosting using priorities from `config.py`.
-7. Optionally filter by collection or chunk type.
+### 8.5 Section detection and heading parsing
 
-### Why this is interesting
+The v3 builder tightens heading detection compared with earlier versions.
 
-Retrieval is not generic document search. It is domain-shaped:
+It uses:
 
-- chunk metadata is used downstream,
-- high-value collections are boosted,
-- retrieval can be evaluated against question-specific expectations,
-- and the system supports failure fallback to BM25-only when dense retrieval is unavailable.
+- heading regex patterns,
+- heading rejection filters,
+- and heading-stack tracking
 
-## 11. How the RAG-VQA pipeline works
+to build section-level structure and heading paths such as hierarchical section context.
 
-The main runtime pipeline is `scripts/rag_vqa_pipeline.py`.
+This matters because retrieval quality is improved when the system knows not just the chunk text, but also the section in which that text appeared.
 
-### Inputs
+### 8.6 Parent-child hierarchical chunking
 
-- frame image from `data/frames_v3/`
-- question from `questions_v3.json`
-- retrieved chunks from the retriever
+One of the key upgrades in v3 is the parent-child chunk hierarchy.
 
-### Prompting strategy
+The script creates:
 
-The pipeline builds a system prompt that:
+- parent chunks for broader evidence context
+- child chunks for finer-grained retrieval units
 
-- frames the assistant as a surgical AI assistant,
-- includes retrieved evidence as context,
-- enforces a safety-critical `DEFER` rule,
-- requires one of two output formats:
-  - `ANSWER: ... | CONFIDENCE: ...`
-  - `DEFER: ...`
+The token defaults are currently:
 
-This is a key project design choice: the answer format is intentionally constrained so the output can be parsed and evaluated consistently.
+- child chunks: 250 tokens
+- parent chunks: 800 tokens
+- child overlap: 30 tokens
+- parent overlap: 80 tokens
 
-### Supported VLM backends
+Parent-child linking is based on sentence-span overlap rather than naive equal splitting.
+
+This is a strong design choice because it allows:
+
+- precise retrieval on smaller evidence units
+- but richer evidence packaging for the final prompt
+
+That same design is later used directly by `retrieval_v3.py`, which retrieves on children and expands to parents for prompt construction.
+
+### 8.7 Tag extraction
+
+The corpus builder extracts multiple tag families from chunk text:
+
+- `anatomy_tags`
+- `instrument_tags`
+- `action_tags`
+- `risk_tags`
+- `phase_scope`
+
+It uses word-boundary matching and guarded alias logic to reduce false positives from overly short aliases.
+
+These tags later become important retrieval signals in the field-aware BM25 and prior-boosting logic.
+
+### 8.8 Contextualized retrieval text
+
+Each chunk gets a `contextualized_text` field.
+
+This is one of the most important changes in the current retrieval design.
+
+Instead of retrieving on raw chunk text alone, the retriever can use a richer representation that includes:
+
+- document title
+- section title / heading path
+- collection context
+- selected tags
+- and the actual chunk content
+
+This makes the retrieval stage more semantically informed and less brittle.
+
+### 8.9 Summary levels
+
+The script also creates:
+
+- `section_summary` chunks
+- `document_summary` chunks
+
+These are useful for future experiments even if the current retrieval system focuses mainly on child-first retrieval.
+
+### 8.10 Validation
+
+The builder ends with a validation pass that checks:
+
+- how many child chunks received `parent_id`
+- parent-child text consistency
+- obvious tag false positives
+- remaining mojibake
+
+This indicates that the corpus builder is not just a preprocessing script. It is already treated as a measurable quality-control stage.
+
+## 9. What `retrieval_v3.py` is doing
+
+`retrieval_v3.py` is the retrieval engine that the current RAG-VQA system actually uses.
+
+The file implements a retrieval design with several layers:
+
+### 9.1 Child-first indexing, parent-expanded evidence
+
+The retriever:
+
+- loads `chunks_v3.jsonl` if present
+- indexes mainly `child` chunks for retrieval
+- then expands selected matches to their linked `parent` chunks for downstream evidence packaging
+
+This is a key architectural decision because it balances:
+
+- retrieval precision
+- evidence completeness
+- and prompt readability
+
+### 9.2 Field-aware BM25
+
+The retriever does not treat each chunk as one flat string for BM25.
+It builds BM25 indexes over multiple fields:
+
+- `contextualized_text`
+- `doc_title`
+- `section_title`
+- `chunk_type`
+- `anatomy_tags`
+- `risk_tags`
+- `phase_scope`
+- `instrument_tags`
+- `action_tags`
+
+Each field has an explicit weight.
+
+This means sparse retrieval is already knowledge-structured rather than plain bag-of-words matching.
+
+### 9.3 Dense retrieval
+
+When enabled, the retriever uses a sentence-transformer embedding model over `contextualized_text`.
+
+The current intended dense model from the environment examples is:
+
+```env
+DENSE_MODEL_NAME=BAAI/bge-large-en-v1.5
+```
+
+Embeddings are normalized and indexed with FAISS for inner-product search.
+
+### 9.4 Optional reranking
+
+If `USE_RERANKER=1`, the retriever loads a reranker model and reranks the top candidate pool.
+
+The current intended reranker is:
+
+```env
+RERANKER_MODEL_NAME=BAAI/bge-reranker-large
+```
+
+This gives the system a three-stage retrieval stack:
+
+1. sparse candidate scoring
+2. dense candidate scoring
+3. optional neural reranking
+
+### 9.5 Query conditioning by question type
+
+This is one of the strongest parts of the current project design.
+
+The retriever uses `question_type` hints to adjust:
+
+- preferred collections
+- preferred chunk types
+- extra query terms
+
+For example:
+
+- `recognition` favors visual ontology and anatomy-landmark content
+- `safety_verification` favors safe-chole and complication-management evidence
+- `risk_pitfall` favors complication and bailout-oriented evidence
+
+This means retrieval is not generic across tasks. It is explicitly conditioned on the clinical intent of the question.
+
+### 9.6 Query expansion using detected classes
+
+If a frame has `classes_detected`, the retriever maps class labels into additional query terms.
+
+For example:
+
+- `grasper`
+- `cystic_duct`
+- `cystic_artery`
+- `hepatic_vein`
+- `liver_ligament`
+
+can be expanded into anatomical or operative terms that help the retriever search for more relevant evidence.
+
+This is an important multimodal bridge in the system:
+
+- vision-side metadata from segmentation/class detection
+- influences text-side retrieval behavior
+
+### 9.7 Fusion and priors
+
+The retriever combines sparse and dense rankings via reciprocal rank fusion, then adjusts scores using:
+
+- collection priority
+- trust tier
+- preferred collection membership
+- preferred chunk types
+- low-value section penalties
+- question-type-specific boosts or penalties
+
+This makes the retrieval stage highly engineered rather than merely off-the-shelf.
+
+### 9.8 Adaptive evidence selection
+
+After ranking, the retriever performs adaptive selection with diversity constraints.
+
+It tries to avoid:
+
+- too many chunks from the same parent
+- too much duplication from the same section
+
+This is important because VLM prompts degrade quickly if the top evidence is redundant.
+
+### 9.9 Evidence packaging
+
+The final retrieved objects contain more than raw text.
+Each packaged item can include:
+
+- `matched_chunk_id`
+- `evidence_chunk_id`
+- `matched_level`
+- `evidence_level`
+- `evidence_text`
+- `evidence_raw_text`
+- `evidence_card`
+
+This packaging is what makes the RAG pipeline traceable and inspectable.
+
+### 9.10 Current observed state
+
+From our recent workflow, retrieval has already been brought to a strong state and reached full retrieval success on the current evaluation setup.
+
+That means the current bottleneck has likely shifted away from retrieval and more toward:
+
+- VLM answer quality
+- defer calibration
+- prompt robustness
+- and answer evaluation quality
+
+## 10. What `rag_vqa_pipeline.py` is doing now
+
+This is the script that runs the actual frame + retrieval + VLM pipeline.
+
+The current version of the file has already been cleaned to align with the present project direction.
+
+### 10.1 Current pipeline behavior
+
+For each question row in `questions_v3.json`, the script:
+
+1. loads the frame from `data/frames_v3/`
+2. retrieves evidence using `retrieval_v3.SurgicalRetriever`
+3. passes `question_type` and `classes_detected` into retrieval
+4. builds a safety-aware system prompt containing retrieved evidence
+5. calls the selected VLM provider
+6. parses the raw answer into structured fields
+7. writes the result to the main results file
+
+### 10.2 Evidence formatting
+
+The prompt includes labeled evidence blocks with metadata such as:
+
+- document title
+- retrieval score
+- collection
+- chunk type
+- section title
+
+This is important for transparency and potentially improves the VLM's ability to distinguish high-level evidence sources.
+
+### 10.3 VLM modes
+
+The pipeline currently supports three runtime modes:
 
 - `mock_vlm`
-  For smoke testing retrieval and pipeline wiring without any VLM call.
-
 - `openai`
-  Sends the frame and prompt to an OpenAI-compatible vision model.
-
 - `local_hf`
-  Runs a Hugging Face vision-language model locally.
 
-### Local HF model support
+The local Hugging Face branch is now cleaner and aligned with the current intended workflow.
+Earlier Florence-specific logic was removed from this main pipeline because it was no longer part of the active experiment path.
 
-The code is designed to support models such as:
+### 10.4 Local HF behavior
 
-- `llava-hf/llava-1.5-7b-hf`
-- optionally Florence-style models
+The local HF path:
 
-The pipeline loads the processor and model once, caches them in global variables, and then reuses them across questions.
+- loads `AutoProcessor`
+- loads `AutoModelForImageTextToText`
+- uses the configured Hugging Face cache and token settings
+- pushes tensors to GPU when available
+- and generates deterministic outputs with `do_sample=False`
 
-### Batch run behavior
+### 10.5 Response parsing
 
-For each question, the script:
+The response parser extracts:
 
-1. resolves the frame path,
-2. retrieves top-k chunks,
-3. builds the prompt,
-4. calls the VLM,
-5. parses the answer,
-6. attaches metadata such as:
-   - gold answer,
-   - should-defer flag,
-   - question type,
-   - difficulty,
-   - latency.
+- raw response text
+- defer flag
+- confidence label
+- parsed answer
 
-It then writes all results to `results/spike_results_v3.json`.
+It now handles formatting more robustly than before and is less brittle when the model returns slightly different casing.
 
-## 12. How evaluation works
+### 10.6 Error handling
 
-The script `scripts/evaluate.py` evaluates the saved results.
+The current version also fixes an earlier logic issue where runtime exceptions could be stored without a proper `error` field and then be counted incorrectly in the run summary.
 
-Its focus is not traditional exact-match VQA accuracy. Instead, it emphasizes the defer mechanism.
+Now, failed items are explicitly marked as errors and are counted correctly in the final summary.
 
-### Metrics computed
+### 10.7 Retrieval trace in output
 
-- total answered vs deferred
-- defer true positives
-- defer false positives
-- defer false negatives
-- defer true negatives
-- defer precision, recall, F1
+The result objects now include not only `retrieved_chunks`, but also:
+
+- `retrieved_matched_chunks`
+- `retrieved_evidence_chunks`
+- `retrieved_scores`
+- `retrieved_previews`
+- `retrieved_evidence_cards`
+
+This is extremely helpful for later debugging because retrieval in v3 is hierarchical: the matched child chunk is not always the same as the packaged parent evidence chunk.
+
+## 11. What `evaluate.py` is doing
+
+The evaluation script is designed mainly around defer-aware analysis rather than conventional answer-only accuracy.
+
+It computes:
+
+- total valid results
+- answered vs deferred counts
+- defer TP / FP / FN / TN
+- defer precision
+- defer recall
+- defer F1
 - confidence distribution
-- per-question-type breakdown
-- per-difficulty breakdown
+- breakdown by question type
+- breakdown by difficulty
 - average latency
+- per-question summary rows
 
-### Generated outputs
+This reflects the project's actual objective well:
 
-The script is designed to produce:
+- a missed defer is treated as dangerous
+- an unnecessary defer is treated as overly cautious
+- and defer quality is measured explicitly
 
-- console report
-- `results/evaluation_report.md`
-- `results/metrics.json`
+That is a good fit for surgical decision-support research, where abstention behavior matters as much as answer generation.
 
-### Why this evaluation is important
+## 12. What `download_hf_models.py` is doing
 
-This project is explicitly safety-oriented. A missed defer on an unsafe frame is treated as a dangerous failure mode. That makes the evaluation closer to risk-sensitive abstention analysis than ordinary VQA benchmarking.
+This utility script pre-downloads the models required for local HF execution:
 
-## 13. Current repository status and maturity
+- dense retrieval model
+- optional reranker model
+- local VLM
 
-The repository is already beyond the idea stage. It contains:
+Its purpose is to let the server cache models before the main pipeline runs.
 
-- a curated frame subset,
-- generated questions and retrieval evaluation files,
-- a structured surgical text corpus,
-- a retriever,
-- a VLM integration pipeline,
-- and an evaluation script.
+This matters operationally because the project uses several large Hugging Face assets, and downloading them lazily during the first full run is slower and harder to debug.
 
-However, it is still clearly a research prototype / spike rather than a production-ready system.
+The script respects:
 
-### Signs of maturity
+- `HF_CACHE_DIR`
+- `HF_TOKEN`
+- current retrieval model settings
+- current local VLM setting
 
-- the workflow is end-to-end,
-- the frame subset is balanced,
-- corpus metadata is rich,
-- retrieval is configurable,
-- and the defer mechanism is integrated into both prompting and evaluation.
+Operationally, this script is part of the deployment workflow, not just a convenience helper.
 
-### Signs it is still experimental
+## 13. What we have effectively built so far
 
-- gold answers are scaffolded and marked as needing expert review,
-- some scripts are older or out of sync with the current `v3` setup,
-- the orchestration script still references older file names and older corpus logic in places,
-- current result files indicate at least one runtime issue with the local Hugging Face path.
+Looking at the repository as a whole, the work completed so far is much more than wiring together a VLM and some PDFs.
 
-## 14. Important inconsistencies and technical debt already visible
+We have effectively built:
 
-Anyone reading this repo should know that not every script is equally current.
+### 13.1 A task formulation layer
 
-### A. `v3` logic stored in a `v2` filename
+The project has a defined ontology of question types, difficulty, and defer expectation.
 
-The file named `scripts/frames_selection_v2.py` has a header describing itself as `frames_selection_v3.py`. This suggests the script evolved but was not renamed consistently.
+### 13.2 A curated retrieval corpus
 
-### B. Old scripts still coexist
+The system does not retrieve from the open internet or arbitrary documents.
+It retrieves from a deliberately selected surgical knowledge set with trust tiers and document collections.
 
-The repo still contains older versions such as:
+### 13.3 A structured retrieval engine
 
-- `scripts/build_corpus.py`
-- `scripts/frames_selection.py`
+The retriever is:
 
-These appear to reflect earlier iterations and should not be assumed to match current config or outputs.
+- field-aware
+- query-conditioned
+- hierarchy-aware
+- evidence-packaging aware
+- and optimized for clinically themed question types
 
-### C. `run_all.py` is not fully aligned with current naming
+### 13.4 A grounded multimodal answer pipeline
 
-`scripts/run_all.py` still references older output names such as `spike_results_v1.json` in comments and uses `build_corpus.py`, while the rest of the repo has moved to the `v3` setup and `build_corpus_v2.py`.
+The VLM is not answering from image alone.
+It is answering with access to retrieved surgical evidence and with explicit safety instructions.
 
-### D. Current saved results indicate a model/runtime issue
+### 13.5 A defer-aware evaluation mindset
 
-`results/spike_results_v3.json` currently shows repeated errors of the form:
+The project already treats abstention as a first-class target rather than an afterthought.
 
-`cannot import name 'AutoModelForVision2Seq' from 'transformers'`
+That is a meaningful research framing choice, especially for surgical support.
 
-So the saved `v3` result file appears to reflect a failed local-HF run rather than a successful full evaluation pass.
+## 14. Strengths of the current system
 
-This does not invalidate the project structure, but it does mean the present repo state is "pipeline mostly assembled, but current local model execution still needs fixing."
+Based on the current source code and recent progress, the main strengths of the project are:
 
-## 15. External dependencies and runtime assumptions
+### 14.1 Retrieval is strongly engineered
 
-The project expects a Python environment with packages from `requirements.txt`, including:
+The retrieval stack is not naive.
+It includes:
 
-- PyTorch
-- transformers
-- sentence-transformers
-- FAISS
-- BM25
-- PDF parsing libraries
-- Pillow / numpy
-- OpenAI SDK
+- document curation
+- section structure
+- parent-child chunking
+- tag extraction
+- contextualized text
+- query-type priors
+- class-conditioned expansion
+- reranking
+- and adaptive evidence selection
 
-It also assumes one of the following runtime contexts:
+That is likely one of the strongest parts of the project right now.
 
-- local smoke test on CPU using `mock_vlm`,
-- GPU server for local Hugging Face VLM,
-- or cloud/API usage for OpenAI vision models.
+### 14.2 The project is clinically framed rather than technically generic
 
-Environment variables are configured through `.env` using `.env.example`.
+Question types such as `safety_verification` and `risk_pitfall` are much closer to real surgical-support reasoning than generic VQA labels.
 
-## 16. What the project is really about at a research level
+### 14.3 The defer mechanism is baked into the pipeline design
 
-At a research level, this project is trying to answer:
+The model is explicitly instructed to prefer safety over forced answers.
 
-> Can we build a surgical assistant that does not just recognize what is in an image, but uses guideline-based evidence and knows when not to answer?
+### 14.4 The outputs are inspectable
 
-That makes the project sit at the intersection of:
+Because the pipeline stores evidence cards, chunk IDs, and parsed responses, it is possible to audit why a result happened.
 
-- medical VQA,
-- retrieval-augmented generation,
-- surgical scene understanding,
-- risk-aware abstention / defer mechanisms,
-- and semi-automatic dataset construction.
+## 15. Current limitations visible from the codebase
 
-## 17. If someone new joins this project, what should they understand first
+Even though the project is in a good state, the current codebase still exposes some meaningful limitations.
 
-A new collaborator should understand the project in this order:
+### 15.1 Evaluation still emphasizes defer metrics more than semantic answer correctness
 
-1. `data/frames_v3/` is the curated benchmark subset.
-2. `questions_v3.json` is generated, not purely hand-authored.
-3. `docs/raw/` plus `build_corpus_v2.py` define the knowledge base.
-4. `retrieval.py` is the bridge between question text and evidence.
-5. `rag_vqa_pipeline.py` is the main end-to-end experiment runner.
-6. `evaluate.py` judges not only answers, but also whether the model deferred appropriately.
-7. The project is currently strongest as a research prototype for pipeline design, not yet as a finalized benchmark or polished deployable system.
+The evaluation script is good for abstention analysis, but it does not yet perform robust semantic matching between predicted answers and gold answers.
 
-## 18. Recommended mental model of the repository
+That means the current system is better at answering:
 
-The cleanest way to think about this repository is:
+- "Did the model defer correctly?"
 
-- `frames_selection_*` builds the image benchmark,
-- `generate_annotations_v3.py` builds the task files,
-- `build_corpus_v2.py` builds the knowledge base,
-- `retrieval.py` finds evidence,
-- `rag_vqa_pipeline.py` answers or defers,
-- `evaluate.py` measures safety-oriented behavior.
+than:
 
-## 19. Final summary
+- "Was the content of the non-defer answer clinically correct?"
 
-This repository is a surgical RAG-VQA research prototype for laparoscopic cholecystectomy. It combines curated laparoscopic frames, guideline-derived retrieval corpora, hybrid retrieval, and a vision-language model with a built-in defer policy. The project is already structured enough to support meaningful experiments, especially around safety-aware answering and abstention, but it still contains annotation scaffolds, version drift between scripts, and at least one unresolved runtime issue in the current local-HF execution path.
+### 15.2 Gold answers are still scaffold-like in many places
+
+The annotation generator creates strong structured stubs, but many `gold_answer` values still look like draft supervision rather than expert-finalized labels.
+
+This is acceptable for a feasibility spike, but it limits how strong final answer-evaluation claims can be.
+
+### 15.3 Prompting is still fairly generic once evidence is inserted
+
+The current RAG prompt is safety-aware, but there is still room to tailor prompting more specifically by question type.
+
+For example:
+
+- recognition questions might need shorter visual identification prompts
+- safety verification questions might need stricter criteria-oriented prompts
+- risk questions might need stronger hazard-focused prompting
+
+### 15.4 The deployment layer is still partly experimental
+
+The main v3 pipeline is aligned, but some supporting scripts and text in the repo still contain traces of earlier versions or assumptions from prior experiments.
+
+This does not block the current work, but it means the repository still benefits from gradual cleanup and harmonization.
+
+## 16. What the project is most ready for next
+
+Because retrieval is now strong, the most promising next optimization directions are likely:
+
+### 16.1 Improve answer quality after retrieval
+
+The next gains may come from:
+
+- prompt design
+- evidence compression
+- evidence ordering
+- and model choice
+
+### 16.2 Improve defer calibration
+
+The project already supports defer behavior, so now the natural next question is:
+
+> When is the system deferring too little, and when is it deferring too much?
+
+That suggests work on:
+
+- thresholding
+- prompt constraints
+- question-type-specific defer rules
+- uncertainty heuristics from visual quality or retrieval quality
+
+### 16.3 Strengthen answer-side evaluation
+
+The repository would benefit from more systematic scoring for:
+
+- answer correctness
+- groundedness to retrieved evidence
+- hallucination tendency
+- and per-question-type failure modes
+
+### 16.4 Tighten repo consistency
+
+Now that the main path is clearly v3, a good cleanup direction is to make all helper scripts, reports, and documentation fully consistent with:
+
+- `chunks_v3`
+- `questions_v3`
+- `retrieval_v3`
+- `spike_results_v3`
+- and the local Hugging Face deployment path
+
+## 17. Practical summary of what we have done together
+
+At this point, the project has evolved into a coherent surgical RAG-VQA prototype with:
+
+- a structured `v3` frame/annotation setup
+- a substantially upgraded corpus builder
+- a much stronger retrieval engine
+- a cleaned local-HF RAG pipeline
+- explicit defer-aware outputs
+- and an evaluation path designed for feasibility analysis
+
+In practical terms, the current codebase now supports this full experiment:
+
+1. prepare frame metadata and question blueprint
+2. generate `questions_v3` and `retrieval_eval_v3`
+3. build `chunks_v3` from curated surgical PDFs
+4. retrieve evidence with `retrieval_v3`
+5. answer with a local Hugging Face VLM or mock/openai mode
+6. parse answer vs defer behavior
+7. evaluate the run with explicit safety-oriented metrics
+
+That is already a strong foundation for the next stage of optimization.
+
+## 18. Final interpretation
+
+The current repository represents a transition point in the project:
+
+- retrieval is no longer the weakest link
+- the pipeline structure is much more mature
+- and the next meaningful gains will likely come from improving answer generation, calibration, and evaluation rigor
+
+So the project is now in a good position to move from:
+
+> "Can we make a safety-aware surgical RAG-VQA pipeline work at all?"
+
+toward:
+
+> "How do we make it more reliable, more interpretable, and more clinically convincing?"

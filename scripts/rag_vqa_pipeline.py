@@ -1,16 +1,16 @@
 """
-rag_vqa_pipeline.py — End-to-end RAG + VLM pipeline for surgical VQA.
+rag_vqa_pipeline.py - End-to-end RAG + VLM pipeline for surgical VQA.
 
 Usage:
-    export OPENAI_API_KEY="sk-..."
+    export VLM_PROVIDER="local_hf"
     python scripts/rag_vqa_pipeline.py
 
-Runs all 10 questions from questions_v1.json against frames + retrieval,
-and saves structured results to results/spike_results_v1.json.
+Runs questions_v3.json against frames + retrieval_v3,
+and saves structured results to results/spike_results_v3.json.
 """
 
-import json
 import base64
+import json
 import sys
 import time
 from pathlib import Path
@@ -18,16 +18,23 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (
-    OPENAI_API_KEY, VLM_PROVIDER, VLM_MODEL, VLM_MAX_TOKENS, VLM_TEMPERATURE,
-    LOCAL_VLM_MODEL, LOCAL_VLM_MAX_NEW_TOKENS,
+    FRAMES_DIR,
+    HF_CACHE_DIR,
+    HF_LOCAL_FILES_ONLY,
     HF_TOKEN,
-    HF_CACHE_DIR, HF_LOCAL_FILES_ONLY,
-    FRAMES_DIR, QUESTIONS_FILE, RESULTS_FILE, RETRIEVAL_TOP_K,
+    LOCAL_VLM_MAX_NEW_TOKENS,
+    LOCAL_VLM_MODEL,
+    OPENAI_API_KEY,
+    QUESTIONS_FILE,
+    RESULTS_FILE,
+    RETRIEVAL_TOP_K,
+    VLM_MAX_TOKENS,
+    VLM_MODEL,
+    VLM_PROVIDER,
+    VLM_TEMPERATURE,
 )
 from retrieval_v3 import SurgicalRetriever
 
-
-# ─── Image encoding ─────────────────────────────────────────────────
 
 def encode_image_b64(image_path: str | Path) -> str:
     with open(image_path, "rb") as f:
@@ -37,8 +44,10 @@ def encode_image_b64(image_path: str | Path) -> str:
 def detect_mime(path: Path) -> str:
     suffix = path.suffix.lower()
     return {
-        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".png": "image/png",  ".webp": "image/webp",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
     }.get(suffix, "image/jpeg")
 
 
@@ -47,20 +56,18 @@ _LOCAL_PROCESSOR = None
 _LOCAL_DEVICE = None
 
 
-# ─── Prompt construction ────────────────────────────────────────────
-
 SYSTEM_TEMPLATE = """You are a surgical AI assistant for laparoscopic cholecystectomy.
 
 YOUR TASK:
-Analyze the provided surgical frame image together with the retrieved surgical 
+Analyze the provided surgical frame image together with the retrieved surgical
 knowledge below. Answer the surgeon's question accurately.
 
-CRITICAL SAFETY RULE — DEFER MECHANISM:
+CRITICAL SAFETY RULE - DEFER MECHANISM:
 If ANY of the following are true, you MUST respond with DEFER instead of answering:
-  • The image is too blurry, smoky, or dark to identify structures confidently
-  • The retrieved evidence contradicts what you see or is insufficient
-  • You are not confident enough to guide a surgical decision safely
-  • The anatomy is ambiguous and a wrong answer could cause patient harm
+  - The image is too blurry, smoky, or dark to identify structures confidently
+  - The retrieved evidence contradicts what you see or is insufficient
+  - You are not confident enough to guide a surgical decision safely
+  - The anatomy is ambiguous and a wrong answer could cause patient harm
 
 RESPONSE FORMAT (pick exactly one):
   ANSWER: [your concise answer] | CONFIDENCE: [high/medium/low]
@@ -76,7 +83,7 @@ def build_system_prompt(retrieved_chunks: list[tuple[dict, float]]) -> str:
         context_block = "No retrieved evidence available."
     else:
         pieces = []
-        for i, (chunk, score) in enumerate(retrieved_chunks):
+        for i, (chunk, score) in enumerate(retrieved_chunks, start=1):
             card = chunk.get("evidence_card", {})
             meta_bits = []
             if card.get("collection"):
@@ -87,18 +94,13 @@ def build_system_prompt(retrieved_chunks: list[tuple[dict, float]]) -> str:
                 meta_bits.append(card["section_title"])
             meta_str = " | ".join(meta_bits)
             pieces.append(
-                f"[Evidence {i+1} — {chunk['doc_title']} "
+                f"[Evidence {i} - {chunk['doc_title']} "
                 f"(relevance {score:.2f})"
                 f"{' | ' + meta_str if meta_str else ''}]:\n{chunk['text']}"
             )
-        context_block = (
-            "RETRIEVED SURGICAL KNOWLEDGE:\n"
-            + "\n\n".join(pieces)
-        )
+        context_block = "RETRIEVED SURGICAL KNOWLEDGE:\n" + "\n\n".join(pieces)
     return SYSTEM_TEMPLATE.format(context_block=context_block)
 
-
-# ─── VLM call ───────────────────────────────────────────────────────
 
 def call_vlm(
     system_prompt: str,
@@ -107,7 +109,6 @@ def call_vlm(
     mime: str = "image/jpeg",
     model: str = VLM_MODEL,
 ) -> str:
-    """Call either OpenAI VLM or a local Hugging Face VLM."""
     if VLM_PROVIDER == "openai":
         return call_openai_vlm(system_prompt, question, image_path, mime, model)
     if VLM_PROVIDER == "local_hf":
@@ -127,7 +128,6 @@ def call_openai_vlm(
     mime: str = "image/jpeg",
     model: str = VLM_MODEL,
 ) -> str:
-    """Call OpenAI-compatible VLM with image + text."""
     from openai import OpenAI
 
     client = OpenAI(api_key=OPENAI_API_KEY)
@@ -162,7 +162,7 @@ def _load_local_hf_vlm():
         return _LOCAL_VLM, _LOCAL_PROCESSOR, _LOCAL_DEVICE
 
     import torch
-    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
+    from transformers import AutoModelForImageTextToText, AutoProcessor
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if device == "cuda" else torch.float32
@@ -174,25 +174,14 @@ def _load_local_hf_vlm():
         token=HF_TOKEN or None,
         trust_remote_code=True,
     )
-    if "florence-2" in LOCAL_VLM_MODEL.lower():
-        model = AutoModelForCausalLM.from_pretrained(
-            LOCAL_VLM_MODEL,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            cache_dir=HF_CACHE_DIR or None,
-            local_files_only=HF_LOCAL_FILES_ONLY,
-            token=HF_TOKEN or None,
-            trust_remote_code=True,
-        )
-    else:
-        model = AutoModelForImageTextToText.from_pretrained(
-            LOCAL_VLM_MODEL,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            cache_dir=HF_CACHE_DIR or None,
-            local_files_only=HF_LOCAL_FILES_ONLY,
-            token=HF_TOKEN or None,
-        )
+    model = AutoModelForImageTextToText.from_pretrained(
+        LOCAL_VLM_MODEL,
+        torch_dtype=dtype,
+        low_cpu_mem_usage=True,
+        cache_dir=HF_CACHE_DIR or None,
+        local_files_only=HF_LOCAL_FILES_ONLY,
+        token=HF_TOKEN or None,
+    )
     model.to(device)
     model.eval()
 
@@ -212,53 +201,6 @@ def call_local_hf_vlm(
 
     model, processor, device = _load_local_hf_vlm()
     image = Image.open(image_path).convert("RGB")
-
-    if "florence-2" in LOCAL_VLM_MODEL.lower():
-        task = "<VQA>"
-        florence_prompt = f"{task}{question}"
-        inputs = processor(
-            text=florence_prompt,
-            images=image,
-            return_tensors="pt",
-        )
-        inputs = {
-            k: (v.to(device) if hasattr(v, "to") else v)
-            for k, v in inputs.items()
-        }
-
-        with torch.no_grad():
-            generated = model.generate(
-                **inputs,
-                max_new_tokens=LOCAL_VLM_MAX_NEW_TOKENS,
-                do_sample=False,
-            )
-
-        generated_text = processor.batch_decode(
-            generated,
-            skip_special_tokens=False,
-        )[0]
-
-        try:
-            parsed = processor.post_process_generation(
-                generated_text,
-                task=task,
-                image_size=(image.width, image.height),
-            )
-            if isinstance(parsed, dict):
-                answer = parsed.get(task)
-                if isinstance(answer, list) and answer:
-                    answer = answer[0]
-                if answer is None and parsed:
-                    answer = next(iter(parsed.values()))
-            else:
-                answer = parsed
-        except Exception:
-            answer = generated_text
-
-        answer = str(answer).strip() if answer is not None else ""
-        if not answer:
-            return "DEFER: local Florence model could not produce a reliable answer."
-        return f"ANSWER: {answer} | CONFIDENCE: low"
 
     prompt = f"{system_prompt}\n\nQUESTION:\n{question}"
     messages = [
@@ -308,41 +250,36 @@ def call_local_hf_vlm(
     return text.strip()
 
 
-# ─── Response parsing ───────────────────────────────────────────────
-
 def parse_response(raw: str) -> dict:
     """Extract structured fields from the VLM's raw text response."""
-    is_defer = raw.upper().startswith("DEFER")
+    text = (raw or "").strip()
+    upper = text.upper()
+    lower = text.lower()
+    is_defer = upper.startswith("DEFER")
 
     confidence = "unknown"
     for level in ("high", "medium", "low"):
-        if f"confidence: {level}" in raw.lower():
+        if f"confidence: {level}" in lower:
             confidence = level
             break
 
-    # Extract the answer or defer reason
-    answer_text = raw
+    answer_text = text
     if is_defer:
-        # Try to extract reason after "DEFER:"
-        if ":" in raw:
-            answer_text = raw.split(":", 1)[1].strip()
-    else:
-        # Try to extract answer before "| CONFIDENCE"
-        if "ANSWER:" in raw.upper():
-            answer_text = raw.split("ANSWER:", 1)[1] if "ANSWER:" in raw else raw
-            if "|" in answer_text:
-                answer_text = answer_text.split("|")[0].strip()
-            answer_text = answer_text.strip()
+        if ":" in text:
+            answer_text = text.split(":", 1)[1].strip()
+    elif "ANSWER:" in upper:
+        start = upper.index("ANSWER:") + len("ANSWER:")
+        answer_text = text[start:].strip()
+        if "|" in answer_text:
+            answer_text = answer_text.split("|", 1)[0].strip()
 
     return {
-        "raw_response": raw,
+        "raw_response": text,
         "is_defer": is_defer,
         "confidence": confidence,
         "parsed_answer": answer_text,
     }
 
-
-# ─── Single question pipeline ───────────────────────────────────────
 
 def run_single(
     frame_path: Path,
@@ -352,9 +289,7 @@ def run_single(
     question_type: Optional[str] = None,
     classes_detected: Optional[dict] = None,
 ) -> dict:
-    """Run retrieval → prompt → VLM → parse for one question."""
-
-    # 1) Retrieve
+    """Run retrieval -> prompt -> VLM -> parse for one question."""
     retrieved = retriever.retrieve_hybrid(
         question,
         top_k=top_k,
@@ -362,28 +297,23 @@ def run_single(
         classes_detected=classes_detected,
     )
 
-    # 2) Build prompt
     system_prompt = build_system_prompt(retrieved)
-
-    # 3) Call VLM
     mime = detect_mime(frame_path)
     raw = call_vlm(system_prompt, question, frame_path, mime)
-
-    # 5) Parse
     parsed = parse_response(raw)
 
     return {
         "frame": str(frame_path.name),
         "question": question,
         "retrieved_chunks": [c["chunk_id"] for c, _ in retrieved],
+        "retrieved_matched_chunks": [c.get("matched_chunk_id", c["chunk_id"]) for c, _ in retrieved],
+        "retrieved_evidence_chunks": [c.get("evidence_chunk_id", c["chunk_id"]) for c, _ in retrieved],
         "retrieved_scores": [round(s, 3) for _, s in retrieved],
         "retrieved_previews": [c["text"][:200] for c, _ in retrieved],
         "retrieved_evidence_cards": [c.get("evidence_card", {}) for c, _ in retrieved],
         **parsed,
     }
 
-
-# ─── Batch run ───────────────────────────────────────────────────────
 
 def run_all(
     retriever: SurgicalRetriever,
@@ -397,28 +327,30 @@ def run_all(
         questions = json.load(f)
 
     results = []
-    total_cost_est = 0.0
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running RAG-VQA pipeline on {len(questions)} questions")
     print(f"VLM: {VLM_PROVIDER}:{VLM_MODEL}  |  Retrieval top-k: {RETRIEVAL_TOP_K}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     for q in questions:
         qid = q["qid"]
         frame_path = FRAMES_DIR / q["frame"]
 
-        # Check frame exists
         if not frame_path.exists():
-            print(f"  ⚠ {qid}: Frame not found → {frame_path}  (skipping)")
-            results.append({
-                "qid": qid,
-                "question": q["question"],
-                "error": f"Frame not found: {frame_path}",
-                "gold_answer": q["gold_answer"],
-                "should_defer": q["should_defer"],
-                "question_type": q["question_type"],
-            })
+            print(f"  [WARN] {qid}: Frame not found -> {frame_path} (skipping)")
+            results.append(
+                {
+                    "qid": qid,
+                    "frame": q["frame"],
+                    "question": q["question"],
+                    "error": f"Frame not found: {frame_path}",
+                    "gold_answer": q["gold_answer"],
+                    "should_defer": q["should_defer"],
+                    "question_type": q["question_type"],
+                    "difficulty": q["difficulty"],
+                }
+            )
             continue
 
         print(f"  {qid}: {q['question'][:55]}...", end="", flush=True)
@@ -433,18 +365,25 @@ def run_all(
                 classes_detected=q.get("classes_detected"),
             )
         except Exception as e:
-            print(f"  ✗ Error: {e}")
+            print(f"  [ERROR] {e}")
             result = {
+                "frame": str(frame_path.name),
+                "question": q["question"],
                 "raw_response": "",
                 "is_defer": False,
                 "confidence": "unknown",
                 "parsed_answer": f"ERROR: {e}",
                 "retrieved_chunks": [],
+                "retrieved_matched_chunks": [],
+                "retrieved_evidence_chunks": [],
+                "retrieved_scores": [],
+                "retrieved_previews": [],
+                "retrieved_evidence_cards": [],
+                "error": str(e),
             }
 
         elapsed = time.time() - t0
 
-        # Attach metadata
         result["qid"] = qid
         result["gold_answer"] = q["gold_answer"]
         result["should_defer"] = q["should_defer"]
@@ -453,38 +392,38 @@ def run_all(
         result["latency_s"] = round(elapsed, 2)
         results.append(result)
 
-        status = "DEFER" if result.get("is_defer") else f"ANS ({result.get('confidence', '?')})"
-        print(f"  → {status}  [{elapsed:.1f}s]")
+        if "error" in result:
+            status = "ERROR"
+        else:
+            status = "DEFER" if result.get("is_defer") else f"ANS ({result.get('confidence', '?')})"
+        print(f"  -> {status}  [{elapsed:.1f}s]")
 
-    # Save
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    print(f"\n{'='*60}")
-    print(f"Saved {len(results)} results → {output_path}")
-    answered = sum(1 for r in results if not r.get("is_defer") and "error" not in r)
+    print(f"\n{'=' * 60}")
+    print(f"Saved {len(results)} results -> {output_path}")
+    answered = sum(1 for r in results if "error" not in r and not r.get("is_defer"))
     deferred = sum(1 for r in results if r.get("is_defer"))
     errors = sum(1 for r in results if "error" in r)
     print(f"  Answered: {answered}  |  Deferred: {deferred}  |  Errors: {errors}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     return results
 
 
-# ─── Offline / mock mode (no API key) ───────────────────────────────
-
 def run_mock(retriever: SurgicalRetriever):
     """
-    Run retrieval only — useful when you don't have an OpenAI key yet.
+    Run retrieval only - useful when you do not want to call a VLM yet.
     Shows what chunks would be retrieved for each question.
     """
     with open(QUESTIONS_FILE, encoding="utf-8") as f:
         questions = json.load(f)
 
-    print(f"\n{'='*60}")
-    print("MOCK MODE — retrieval only, no VLM call")
-    print(f"{'='*60}\n")
+    print(f"\n{'=' * 60}")
+    print("MOCK MODE - retrieval only, no VLM call")
+    print(f"{'=' * 60}\n")
 
     mock_results = []
     for q in questions:
@@ -498,37 +437,40 @@ def run_mock(retriever: SurgicalRetriever):
         for rank, (chunk, score) in enumerate(retrieved, 1):
             print(f"  #{rank} [{score:.3f}] {chunk['text'][:120]}...")
 
-        mock_results.append({
-            "qid": q["qid"],
-            "question": q["question"],
-            "retrieved_chunks": [c["chunk_id"] for c, _ in retrieved],
-            "retrieved_scores": [round(s, 3) for _, s in retrieved],
-            "gold_answer": q["gold_answer"],
-            "should_defer": q["should_defer"],
-            "question_type": q["question_type"],
-            "mode": "mock_retrieval_only",
-        })
+        mock_results.append(
+            {
+                "qid": q["qid"],
+                "question": q["question"],
+                "retrieved_chunks": [c["chunk_id"] for c, _ in retrieved],
+                "retrieved_matched_chunks": [c.get("matched_chunk_id", c["chunk_id"]) for c, _ in retrieved],
+                "retrieved_evidence_chunks": [c.get("evidence_chunk_id", c["chunk_id"]) for c, _ in retrieved],
+                "retrieved_scores": [round(s, 3) for _, s in retrieved],
+                "gold_answer": q["gold_answer"],
+                "should_defer": q["should_defer"],
+                "question_type": q["question_type"],
+                "mode": "mock_retrieval_only",
+            }
+        )
 
-    # Save mock results
     mock_path = RESULTS_FILE.parent / "mock_retrieval_results.json"
     with open(mock_path, "w", encoding="utf-8") as f:
         json.dump(mock_results, f, indent=2, ensure_ascii=False)
-    print(f"\nMock results saved → {mock_path}")
+    print(f"\nMock results saved -> {mock_path}")
 
-
-# ─── Main ────────────────────────────────────────────────────────────
 
 def main():
     retriever = SurgicalRetriever()
 
     if VLM_PROVIDER == "openai" and not OPENAI_API_KEY:
-        print("\n⚠  OPENAI_API_KEY not set — running in MOCK mode (retrieval only)")
+        print("\n[WARN] OPENAI_API_KEY not set - running in MOCK mode (retrieval only)")
         run_mock(retriever)
-    else:
-        if VLM_PROVIDER == "local_hf":
-            print(f"[Preflight] Loading local VLM: {LOCAL_VLM_MODEL}")
-            _load_local_hf_vlm()
-        run_all(retriever)
+        return
+
+    if VLM_PROVIDER == "local_hf":
+        print(f"[Preflight] Loading local VLM: {LOCAL_VLM_MODEL}")
+        _load_local_hf_vlm()
+
+    run_all(retriever)
 
 
 if __name__ == "__main__":
