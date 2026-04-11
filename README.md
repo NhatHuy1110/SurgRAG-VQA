@@ -1,4 +1,4 @@
-# Surgical RAG-VQA
+ï»¿# Surgical RAG-VQA
 
 Retrieval-augmented visual question answering for laparoscopic cholecystectomy.
 
@@ -15,23 +15,23 @@ The current repo is prepared for the `frames_v3` and `questions_v3` setup.
 ```text
 surg-rag-vqa/
 +-- data/
-¦   +-- annotations/
-¦   ¦   +-- questions_v3.json
-¦   ¦   +-- retrieval_eval_v3.json
-¦   +-- cholec_raw/
-¦   +-- frames_v3/
+Â¦   +-- annotations/
+Â¦   Â¦   +-- questions_v3.json
+Â¦   Â¦   +-- retrieval_eval_v3.json
+Â¦   +-- cholec_raw/
+Â¦   +-- frames_v3/
 +-- docs/
-¦   +-- raw/
-¦   +-- chunks/
+Â¦   +-- raw/
+Â¦   +-- chunks/
 +-- results/
 +-- scripts/
-¦   +-- build_corpus_v2.py
-¦   +-- retrieval.py
-¦   +-- rag_vqa_pipeline.py
-¦   +-- evaluate.py
-¦   +-- generate_annotations_v3.py
-¦   +-- download_hf_models.py
-¦   +-- config.py
+Â¦   +-- build_corpus_v2.py
+Â¦   +-- retrieval.py
+Â¦   +-- rag_vqa_pipeline.py
+Â¦   +-- evaluate.py
+Â¦   +-- generate_annotations_v3.py
+Â¦   +-- download_hf_models.py
+Â¦   +-- config.py
 +-- .env.example
 +-- requirements.txt
 ```
@@ -112,7 +112,10 @@ Edit `.env` after copying from `.env.example`.
 ```env
 VLM_PROVIDER=mock_vlm
 RETRIEVAL_MODE=hybrid
-DENSE_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+DENSE_MODEL_NAME=BAAI/bge-large-en-v1.5
+USE_RERANKER=1
+RERANKER_MODEL_NAME=BAAI/bge-reranker-large
+RERANK_TOP_N=20
 ```
 
 ### Stable server config
@@ -128,6 +131,9 @@ LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
 LOCAL_VLM_MAX_NEW_TOKENS=256
 RETRIEVAL_MODE=hybrid
 DENSE_MODEL_NAME=BAAI/bge-large-en-v1.5
+USE_RERANKER=1
+RERANKER_MODEL_NAME=BAAI/bge-reranker-large
+RERANK_TOP_N=20
 ```
 
 ### Optional stronger VLM
@@ -174,6 +180,11 @@ python scripts/build_corpus_v2.py
 python scripts/retrieval.py
 ```
 
+Recommended retrieval stack:
+
+- dense retrieval with `BAAI/bge-large-en-v1.5`
+- reranking of the top candidate pool with `BAAI/bge-reranker-large`
+
 If dense retrieval is unavailable, you can force BM25-only:
 
 ```bash
@@ -203,13 +214,13 @@ python scripts/evaluate.py
   Builds chunked knowledge files from guideline PDFs.
 
 - `scripts/retrieval.py`
-  Runs sparse or hybrid retrieval over the built corpus.
+  Runs sparse or hybrid retrieval over the built corpus, with optional reranking.
 
 - `scripts/rag_vqa_pipeline.py`
   Runs the full frame to retrieval to VLM to parse to save pipeline.
 
 - `scripts/download_hf_models.py`
-  Pre-downloads retrieval and VLM models for Hugging Face local mode.
+  Pre-downloads the dense retriever, reranker, and VLM models for Hugging Face local mode.
 
 - `scripts/generate_annotations_v3.py`
   Regenerates `questions_v3.json` and `retrieval_eval_v3.json`.
@@ -228,3 +239,4 @@ The code currently points to:
 - Do not commit a real `.env` with secrets.
 - If you shared a real Hugging Face token during development, rotate it before public use.
 - If local Hugging Face VLM loading fails, switch to `mock_vlm` to validate the rest of the pipeline first.
+

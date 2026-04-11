@@ -51,7 +51,7 @@ def main():
         return
 
     if not args.skip_corpus:
-        run_script("build_corpus.py", "Build RAG corpus (PDF → chunks)")
+        run_script("build_corpus_v3.py", "Build RAG corpus (PDF → chunks)")
 
     if args.mock:
         # For mock mode, we import and run directly to use mock function
@@ -61,7 +61,7 @@ def main():
 
         sys.path.insert(0, str(SCRIPTS_DIR))
         from rag_vqa_pipeline import run_mock
-        from retrieval import SurgicalRetriever
+        from retrieval_v3 import SurgicalRetriever
         retriever = SurgicalRetriever()
         run_mock(retriever)
         print("\n✓ Mock retrieval — done\n")

@@ -24,7 +24,7 @@ from config import (
     HF_CACHE_DIR, HF_LOCAL_FILES_ONLY,
     FRAMES_DIR, QUESTIONS_FILE, RESULTS_FILE, RETRIEVAL_TOP_K,
 )
-from retrieval import SurgicalRetriever
+from retrieval_v3 import SurgicalRetriever
 
 
 # ─── Image encoding ─────────────────────────────────────────────────
@@ -77,9 +77,19 @@ def build_system_prompt(retrieved_chunks: list[tuple[dict, float]]) -> str:
     else:
         pieces = []
         for i, (chunk, score) in enumerate(retrieved_chunks):
+            card = chunk.get("evidence_card", {})
+            meta_bits = []
+            if card.get("collection"):
+                meta_bits.append(card["collection"])
+            if card.get("chunk_type"):
+                meta_bits.append(card["chunk_type"])
+            if card.get("section_title"):
+                meta_bits.append(card["section_title"])
+            meta_str = " | ".join(meta_bits)
             pieces.append(
                 f"[Evidence {i+1} — {chunk['doc_title']} "
-                f"(relevance {score:.2f})]:\n{chunk['text']}"
+                f"(relevance {score:.2f})"
+                f"{' | ' + meta_str if meta_str else ''}]:\n{chunk['text']}"
             )
         context_block = (
             "RETRIEVED SURGICAL KNOWLEDGE:\n"
@@ -339,11 +349,18 @@ def run_single(
     question: str,
     retriever: SurgicalRetriever,
     top_k: int = RETRIEVAL_TOP_K,
+    question_type: Optional[str] = None,
+    classes_detected: Optional[dict] = None,
 ) -> dict:
     """Run retrieval → prompt → VLM → parse for one question."""
 
     # 1) Retrieve
-    retrieved = retriever.retrieve_hybrid(question, top_k=top_k)
+    retrieved = retriever.retrieve_hybrid(
+        question,
+        top_k=top_k,
+        question_type=question_type,
+        classes_detected=classes_detected,
+    )
 
     # 2) Build prompt
     system_prompt = build_system_prompt(retrieved)
@@ -361,6 +378,7 @@ def run_single(
         "retrieved_chunks": [c["chunk_id"] for c, _ in retrieved],
         "retrieved_scores": [round(s, 3) for _, s in retrieved],
         "retrieved_previews": [c["text"][:200] for c, _ in retrieved],
+        "retrieved_evidence_cards": [c.get("evidence_card", {}) for c, _ in retrieved],
         **parsed,
     }
 
@@ -407,7 +425,13 @@ def run_all(
         t0 = time.time()
 
         try:
-            result = run_single(frame_path, q["question"], retriever)
+            result = run_single(
+                frame_path,
+                q["question"],
+                retriever,
+                question_type=q.get("question_type"),
+                classes_detected=q.get("classes_detected"),
+            )
         except Exception as e:
             print(f"  ✗ Error: {e}")
             result = {
@@ -464,7 +488,12 @@ def run_mock(retriever: SurgicalRetriever):
 
     mock_results = []
     for q in questions:
-        retrieved = retriever.retrieve_hybrid(q["question"], top_k=RETRIEVAL_TOP_K)
+        retrieved = retriever.retrieve_hybrid(
+            q["question"],
+            top_k=RETRIEVAL_TOP_K,
+            question_type=q.get("question_type"),
+            classes_detected=q.get("classes_detected"),
+        )
         print(f"\n{q['qid']}: {q['question']}")
         for rank, (chunk, score) in enumerate(retrieved, 1):
             print(f"  #{rank} [{score:.3f}] {chunk['text'][:120]}...")

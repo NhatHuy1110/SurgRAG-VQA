@@ -18,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (
     CHUNKS_FILE,
     DENSE_MODEL_NAME,
+    USE_RERANKER,
+    RERANKER_MODEL_NAME,
+    RERANK_TOP_N,
     HYBRID_ALPHA,
     RETRIEVAL_TOP_K,
     RETRIEVAL_MODE,
@@ -52,6 +55,12 @@ class SurgicalRetrieverV2:
         self.retrieval_mode = RETRIEVAL_MODE
         self.encoder = None
         self.faiss_index = None
+        self.use_reranker = USE_RERANKER
+        self.reranker_model_name = RERANKER_MODEL_NAME
+        self.rerank_top_n = max(RERANK_TOP_N, RETRIEVAL_TOP_K)
+        self.reranker_tokenizer = None
+        self.reranker_model = None
+        self.reranker_device = "cpu"
         print(f"[RetrieverV2] Loaded {len(self.chunks)} chunks from {chunks_path}")
 
         if not self.chunks:
@@ -70,6 +79,7 @@ class SurgicalRetrieverV2:
         tokenised = [t.lower().split() for t in self.texts]
         self.bm25 = BM25Okapi(tokenised)
         print("[RetrieverV2] BM25 index built")
+        self._load_reranker()
 
         if self.retrieval_mode == "bm25_only":
             print("[RetrieverV2] Dense retrieval disabled by RETRIEVAL_MODE=bm25_only")
@@ -106,6 +116,80 @@ class SurgicalRetrieverV2:
                 "or set HF_CACHE_DIR / HF_LOCAL_FILES_ONLY appropriately."
             )
 
+    def _load_reranker(self) -> None:
+        if not self.use_reranker:
+            print("[RetrieverV2] Reranker disabled")
+            return
+
+        try:
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+            self.reranker_device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"[RetrieverV2] Loading reranker: {self.reranker_model_name} ...")
+            self.reranker_tokenizer = AutoTokenizer.from_pretrained(
+                self.reranker_model_name,
+                cache_dir=HF_CACHE_DIR or None,
+                local_files_only=HF_LOCAL_FILES_ONLY,
+                token=HF_TOKEN or None,
+            )
+            self.reranker_model = AutoModelForSequenceClassification.from_pretrained(
+                self.reranker_model_name,
+                cache_dir=HF_CACHE_DIR or None,
+                local_files_only=HF_LOCAL_FILES_ONLY,
+                token=HF_TOKEN or None,
+            )
+            self.reranker_model.to(self.reranker_device)
+            self.reranker_model.eval()
+            print(f"[RetrieverV2] Reranker ready on {self.reranker_device}")
+        except Exception as e:
+            self.use_reranker = False
+            self.reranker_tokenizer = None
+            self.reranker_model = None
+            print(f"[RetrieverV2] Reranker unavailable, continuing without rerank: {e}")
+
+    def rerank_candidates(self, query: str, candidates: list[tuple[dict, float]], top_k: int):
+        if (
+            not self.use_reranker
+            or self.reranker_model is None
+            or self.reranker_tokenizer is None
+            or not candidates
+        ):
+            return candidates[:top_k]
+
+        import torch
+
+        top_n = min(len(candidates), max(top_k, self.rerank_top_n))
+        pool = candidates[:top_n]
+        pairs = [(query, chunk["text"]) for chunk, _ in pool]
+
+        with torch.no_grad():
+            encoded = self.reranker_tokenizer(
+                pairs,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt",
+            )
+            encoded = {
+                k: (v.to(self.reranker_device) if hasattr(v, "to") else v)
+                for k, v in encoded.items()
+            }
+            outputs = self.reranker_model(**encoded)
+            logits = outputs.logits
+            if logits.ndim > 1:
+                scores = logits[:, 0]
+            else:
+                scores = logits
+            scores = scores.detach().cpu().float().tolist()
+
+        reranked = [
+            (chunk, float(score))
+            for (chunk, _), score in zip(pool, scores)
+        ]
+        reranked.sort(key=lambda x: x[1], reverse=True)
+        return reranked[:top_k]
+
     # ─── Sparse ──────────────────────────────────────────────────
 
     def retrieve_bm25(self, query: str, top_k: int = RETRIEVAL_TOP_K):
@@ -141,7 +225,7 @@ class SurgicalRetrieverV2:
         boost_collections: bool = True,
     ):
         alpha = alpha if alpha is not None else self.alpha
-        pool = top_k * 4
+        pool = max(top_k * 4, self.rerank_top_n if self.use_reranker else top_k * 4)
 
         bm25_results = self.retrieve_bm25(query, top_k=pool)
 
@@ -158,7 +242,7 @@ class SurgicalRetrieverV2:
                     final_score *= COLLECTION_PRIORITY.get(coll, 0.7)
                 ranked.append((chunk, float(final_score)))
             ranked.sort(key=lambda x: x[1], reverse=True)
-            return ranked[:top_k]
+            return self.rerank_candidates(query, ranked, top_k)
 
         dense_results = self.retrieve_dense(query, top_k=pool)
 
@@ -203,7 +287,8 @@ class SurgicalRetrieverV2:
             }
 
         ranked = sorted(combined.values(), key=lambda x: x["score"], reverse=True)
-        return [(r["chunk"], r["score"]) for r in ranked[:top_k]]
+        initial = [(r["chunk"], float(r["score"])) for r in ranked[:pool]]
+        return self.rerank_candidates(query, initial, top_k)
 
     # ─── Backward compat ─────────────────────────────────────────
 

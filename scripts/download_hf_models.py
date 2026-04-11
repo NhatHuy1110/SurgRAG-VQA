@@ -2,7 +2,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import DENSE_MODEL_NAME, LOCAL_VLM_MODEL, HF_CACHE_DIR, HF_TOKEN
+from config import (
+    DENSE_MODEL_NAME,
+    USE_RERANKER,
+    RERANKER_MODEL_NAME,
+    LOCAL_VLM_MODEL,
+    HF_CACHE_DIR,
+    HF_TOKEN,
+)
 
 
 def main() -> None:
@@ -11,6 +18,10 @@ def main() -> None:
     print("[INFO] Hugging Face model pre-download")
     print(f"[INFO] cache_dir = {cache_dir or '(default Hugging Face cache)'}")
     print(f"[INFO] dense model = {DENSE_MODEL_NAME}")
+    if USE_RERANKER:
+        print(f"[INFO] reranker    = {RERANKER_MODEL_NAME}")
+    else:
+        print("[INFO] reranker    = disabled")
     print(f"[INFO] vlm model   = {LOCAL_VLM_MODEL}")
 
     print("\n[STEP] Downloading dense retrieval model...")
@@ -28,6 +39,29 @@ def main() -> None:
     except Exception as e:
         print(f"[WARN] Dense retrieval model download failed: {e}")
         print("[WARN] Continuing to the VLM download step.")
+
+    reranker_ok = not USE_RERANKER
+    if USE_RERANKER:
+        print("\n[STEP] Downloading reranker model...")
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        try:
+            AutoTokenizer.from_pretrained(
+                RERANKER_MODEL_NAME,
+                cache_dir=cache_dir,
+                local_files_only=False,
+                token=HF_TOKEN or None,
+            )
+            AutoModelForSequenceClassification.from_pretrained(
+                RERANKER_MODEL_NAME,
+                cache_dir=cache_dir,
+                local_files_only=False,
+                token=HF_TOKEN or None,
+            )
+            reranker_ok = True
+            print("[DONE] Reranker model is cached.")
+        except Exception as e:
+            print(f"[WARN] Reranker model download failed: {e}")
+            print("[WARN] Continuing to the VLM download step.")
 
     print("\n[STEP] Downloading local VLM...")
     from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
@@ -63,7 +97,7 @@ def main() -> None:
     except Exception as e:
         print(f"[ERROR] Local VLM download failed: {e}")
 
-    if dense_ok and vlm_ok:
+    if dense_ok and reranker_ok and vlm_ok:
         print("\n[SUCCESS] All required Hugging Face models are cached locally.")
         print("[NEXT] You can run with HF_LOCAL_FILES_ONLY=1 for offline use.")
         return
@@ -71,6 +105,8 @@ def main() -> None:
     print("\n[PARTIAL] Model download did not fully complete.")
     if not dense_ok:
         print("[PARTIAL] Dense retrieval model is not confirmed by this run.")
+    if not reranker_ok:
+        print("[PARTIAL] Reranker model is not confirmed by this run.")
     if not vlm_ok:
         print("[PARTIAL] Local VLM is not confirmed by this run.")
 

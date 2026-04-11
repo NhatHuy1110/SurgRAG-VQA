@@ -28,6 +28,9 @@ CHUNKS_FILE_V1   = DOCS_CHUNKS_DIR / "chunks_v1.jsonl"
 CHUNKS_FILE      = DOCS_CHUNKS_DIR / "chunks_v2.jsonl"
 RESULTS_FILE     = RESULTS_DIR / "spike_results_v3.json"
 
+# Output files (v3 produces a richer JSONL)
+CHUNKS_FILE_V3 = DOCS_CHUNKS_DIR / "chunks_v3.jsonl"
+
 # ─── Corpus Manifest ─────────────────────────────────────────────────
 RAG_DOCUMENTS = [
     # ── Tier A: Core guidelines ───────────────────────────────────
@@ -139,6 +142,13 @@ DEFAULT_CHUNK_SIZE    = 800
 DEFAULT_CHUNK_OVERLAP = 100
 MIN_CHUNK_LENGTH      = 80
 
+# Token-based chunking (replaces char-based defaults for v3)
+CHILD_CHUNK_TOKENS   = 250    # child: precise retrieval unit
+PARENT_CHUNK_TOKENS  = 800    # parent: broader context for evidence packaging
+CHILD_OVERLAP_TOKENS = 30
+PARENT_OVERLAP_TOKENS = 80
+MIN_CHUNK_TOKENS     = 30
+ 
 # ─── Section detection patterns ──────────────────────────────────────
 HEADING_PATTERNS = [
     r"^(?:Question|Step|Recommendation|Key Question)\s*\d+",
@@ -176,6 +186,12 @@ DENSE_MODEL_NAME = os.environ.get(
     "DENSE_MODEL_NAME",
     "sentence-transformers/all-MiniLM-L6-v2",
 )
+USE_RERANKER     = os.environ.get("USE_RERANKER", "0") == "1"
+RERANKER_MODEL_NAME = os.environ.get(
+    "RERANKER_MODEL_NAME",
+    "BAAI/bge-reranker-large",
+)
+RERANK_TOP_N     = int(os.environ.get("RERANK_TOP_N", "20"))
 HYBRID_ALPHA     = 0.6
 RETRIEVAL_TOP_K  = 5
 RETRIEVAL_MODE   = os.environ.get("RETRIEVAL_MODE", "hybrid")
