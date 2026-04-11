@@ -1,81 +1,80 @@
-﻿# Surgical RAG-VQA
+# Surgical RAG-VQA
 
-Retrieval-augmented visual question answering for laparoscopic cholecystectomy.
+Safety-aware retrieval-augmented visual question answering for laparoscopic cholecystectomy.
 
-This repo is organized around three stages:
+This repository implements a surgical RAG-VQA pipeline that combines:
 
-1. Build a surgical text corpus from guideline PDFs
-2. Retrieve relevant evidence for each visual question
-3. Run a VLM on frame plus retrieved evidence with defer-aware prompting
+- laparoscopic frame input
+- retrieval from curated surgical guideline and anatomy documents
+- a local Hugging Face vision-language model
+- an explicit `DEFER` mechanism for unsafe or uncertain cases
 
-The current repo is prepared for the `frames_v3` and `questions_v3` setup.
+The current codebase is aligned with the final experiment setup:
 
-## Project Layout
+- frames: `data/frames/`
+- questions: `data/annotations/questions.json`
+- retrieval evaluation: `data/annotations/retrieval_eval.json`
+- retrieval corpus: `docs/chunks/chunks.jsonl`
+- main output: `results/spike_results.json`
 
-```text
-surg-rag-vqa/
-+-- data/
-¦   +-- annotations/
-¦   ¦   +-- questions_v3.json
-¦   ¦   +-- retrieval_eval_v3.json
-¦   +-- cholec_raw/
-¦   +-- frames_v3/
-+-- docs/
-¦   +-- raw/
-¦   +-- chunks/
-+-- results/
-+-- scripts/
-¦   +-- build_corpus_v2.py
-¦   +-- retrieval.py
-¦   +-- rag_vqa_pipeline.py
-¦   +-- evaluate.py
-¦   +-- generate_annotations_v3.py
-¦   +-- download_hf_models.py
-¦   +-- config.py
-+-- .env.example
-+-- requirements.txt
+## Pipeline Overview
+
+The active workflow in this repository has four stages:
+
+1. Build a structured surgical retrieval corpus from guideline PDFs.
+2. Retrieve relevant evidence using `retrieval.py` over `chunks.jsonl`.
+3. Run a local Hugging Face VLM on frame + retrieved evidence with a safety-aware prompt.
+4. Evaluate answer/defer behavior and save structured outputs.
+
+## Active Components
+
+The main scripts used by the current experiment are:
+
+- `scripts/build_corpus.py`
+- `scripts/generate_annotations.py`
+- `scripts/retrieval.py`
+- `scripts/rag_vqa_pipeline.py`
+- `scripts/evaluate.py`
+- `scripts/download_hf_models.py`
+- `scripts/config.py`
+
+## Retrieval Design
+
+The current retrieval stack is built around `retrieval.py` and includes:
+
+- child-first retrieval over `chunks.jsonl`
+- parent-expanded evidence packaging for prompt construction
+- field-aware BM25 over contextualized chunk fields
+- dense retrieval with sentence-transformer embeddings
+- optional neural reranking
+- question-type-conditioned priors
+- class-conditioned query expansion from detected visual classes
+- adaptive evidence selection to reduce redundancy
+
+## VLM Design
+
+The current VLM path in `scripts/rag_vqa_pipeline.py` supports:
+
+- `local_hf`
+- `openai`
+- `mock_vlm`
+
+The recommended server configuration for the current project is `local_hf` with a GPU-backed Hugging Face model. The default local VLM in code is:
+
+```env
+LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
 ```
 
-## Runtime Modes
+The prompt is explicitly safety-oriented and instructs the model to return `DEFER` when:
 
-There are three practical runtime modes:
+- the frame is visually unreliable
+- anatomy is ambiguous
+- retrieved evidence is insufficient
+- answering would be unsafe
 
-1. `mock_vlm`
-   Use this for smoke testing retrieval and pipeline wiring without loading a VLM.
+## Server Setup
 
-2. `local_hf`
-   Use this on a GPU server with Hugging Face models.
-
-3. `openai`
-   Use this only if you intentionally want to call an OpenAI model.
-
-## Local Dev Setup
-
-Windows PowerShell:
-
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-Copy-Item .env.example .env
-```
-
-Linux server:
-
-```bash
-python -m venv venv
-source venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-cp .env.example .env
-```
-
-## GPU Server Setup
-
-Create a fresh environment on the server. Do not copy the local `venv/` directory.
-
-Typical sequence:
+Use a fresh Python environment on the server. Do not copy a local virtual environment.
 
 ```bash
 git clone <your-repo-url>
@@ -83,11 +82,9 @@ cd surg-rag-vqa
 python -m venv venv
 source venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
-cp .env.example .env
 ```
 
-If you need a CUDA-specific PyTorch build, install that first, then install the rest of `requirements.txt`.
+If the server uses CUDA, install the correct PyTorch build first, then install the remaining dependencies.
 
 Example:
 
@@ -96,37 +93,21 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install -r requirements.txt
 ```
 
-Check GPU visibility:
+Then create the environment file:
 
 ```bash
-nvidia-smi
-python -c "import torch; print(torch.cuda.is_available())"
+cp .env.example .env
 ```
 
-## Environment Configuration
+## Recommended Server Configuration
 
-Edit `.env` after copying from `.env.example`.
-
-### Safe local smoke-test config
-
-```env
-VLM_PROVIDER=mock_vlm
-RETRIEVAL_MODE=hybrid
-DENSE_MODEL_NAME=BAAI/bge-large-en-v1.5
-USE_RERANKER=1
-RERANKER_MODEL_NAME=BAAI/bge-reranker-large
-RERANK_TOP_N=20
-```
-
-### Stable server config
-
-This is the most practical starting point for a strong GPU server:
+Edit `.env` for the local Hugging Face pipeline.
 
 ```env
 VLM_PROVIDER=local_hf
 HF_TOKEN=hf_your_read_token_here
-HF_LOCAL_FILES_ONLY=0
 HF_CACHE_DIR=
+HF_LOCAL_FILES_ONLY=0
 LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
 LOCAL_VLM_MAX_NEW_TOKENS=256
 RETRIEVAL_MODE=hybrid
@@ -136,107 +117,80 @@ RERANKER_MODEL_NAME=BAAI/bge-reranker-large
 RERANK_TOP_N=20
 ```
 
-### Optional stronger VLM
-
-If your server stack supports it cleanly, you can later try:
+Optional alternative VLM if your server stack supports it cleanly:
 
 ```env
 LOCAL_VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
 ```
 
-## Download Hugging Face Models
+## Prepare Models on Server
 
-Before running the full local Hugging Face pipeline, pre-download the models:
+Pre-download the retrieval and VLM models before the first full run:
 
 ```bash
 python scripts/download_hf_models.py
 ```
 
-After successful download, you can force offline loading:
+After the cache is fully prepared, you may switch to offline-only loading:
 
 ```bash
 export HF_LOCAL_FILES_ONLY=1
 ```
 
-Windows:
+## Run on Server
 
-```powershell
-$env:HF_LOCAL_FILES_ONLY="1"
-```
+### 1. Build the retrieval corpus
 
-## Run Order
-
-### 1. Build the document corpus
-
-Run when you change PDFs in `docs/raw/`:
+Run this when `docs/raw/` changes or when you want to regenerate the `v3` chunk corpus.
 
 ```bash
-python scripts/build_corpus_v2.py
+python scripts/build_corpus.py
 ```
 
-### 2. Test retrieval only
-
-```bash
-python scripts/retrieval.py
-```
-
-Recommended retrieval stack:
-
-- dense retrieval with `BAAI/bge-large-en-v1.5`
-- reranking of the top candidate pool with `BAAI/bge-reranker-large`
-
-If dense retrieval is unavailable, you can force BM25-only:
-
-```bash
-export RETRIEVAL_MODE=bm25_only
-python scripts/retrieval.py
-```
-
-### 3. Run the full RAG-VQA pipeline
+### 2. Run the full RAG-VQA pipeline
 
 ```bash
 python scripts/rag_vqa_pipeline.py
 ```
 
-Outputs are written to:
+This writes the main structured output to:
 
-- `results/spike_results_v3.json`
+- `results/spike_results.json`
 
-### 4. Evaluate results
+### 3. Evaluate results
 
 ```bash
 python scripts/evaluate.py
 ```
 
-## What Each Script Does
+## Data and Artifact Notes
 
-- `scripts/build_corpus_v2.py`
-  Builds chunked knowledge files from guideline PDFs.
+This repository ignores generated data and artifacts such as:
 
-- `scripts/retrieval.py`
-  Runs sparse or hybrid retrieval over the built corpus, with optional reranking.
+- `data/`
+- `docs/chunks/`
+- `docs/raw/`
+- `results/`
 
-- `scripts/rag_vqa_pipeline.py`
-  Runs the full frame to retrieval to VLM to parse to save pipeline.
+That means a server pull of code alone may not be sufficient if the required data or chunk files are not already present. In practice, the server must have:
 
-- `scripts/download_hf_models.py`
-  Pre-downloads the dense retriever, reranker, and VLM models for Hugging Face local mode.
+- the `frames` images
+- the `questions` and `retrieval_eval` annotation files
+- the source PDFs in `docs/raw/` or a prebuilt `chunks.jsonl`
 
-- `scripts/generate_annotations_v3.py`
-  Regenerates `questions_v3.json` and `retrieval_eval_v3.json`.
+## Security and Operational Notes
 
-## Current Defaults
+- Do not commit a real `.env` file.
+- Do not expose a real Hugging Face token in a public repository.
+- Install a CUDA-compatible PyTorch build if you plan to run local HF models on GPU.
+- If the first local HF run fails, check model caching, GPU visibility, and Transformers compatibility before rerunning the full pipeline.
 
-The code currently points to:
+## Summary
 
-- frames: `data/frames_v3`
-- questions: `data/annotations/questions_v3.json`
-- retrieval eval: `data/annotations/retrieval_eval_v3.json`
-- results: `results/spike_results_v3.json`
+This repository is a research-oriented surgical RAG-VQA prototype with:
 
-## Notes
-
-- Do not commit a real `.env` with secrets.
-- If you shared a real Hugging Face token during development, rotate it before public use.
-- If local Hugging Face VLM loading fails, switch to `mock_vlm` to validate the rest of the pipeline first.
-
+- a structured `v3` frame and annotation setup
+- a hierarchical retrieval corpus
+- retrieval optimized for surgical question types
+- a local Hugging Face VLM pipeline with explicit defer behavior
+- evaluation focused on safety-aware answer vs defer performance

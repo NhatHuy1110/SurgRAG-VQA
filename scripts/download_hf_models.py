@@ -1,14 +1,14 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (
     DENSE_MODEL_NAME,
-    USE_RERANKER,
-    RERANKER_MODEL_NAME,
-    LOCAL_VLM_MODEL,
     HF_CACHE_DIR,
     HF_TOKEN,
+    LOCAL_VLM_MODEL,
+    RERANKER_MODEL_NAME,
+    USE_RERANKER,
 )
 
 
@@ -18,14 +18,12 @@ def main() -> None:
     print("[INFO] Hugging Face model pre-download")
     print(f"[INFO] cache_dir = {cache_dir or '(default Hugging Face cache)'}")
     print(f"[INFO] dense model = {DENSE_MODEL_NAME}")
-    if USE_RERANKER:
-        print(f"[INFO] reranker    = {RERANKER_MODEL_NAME}")
-    else:
-        print("[INFO] reranker    = disabled")
-    print(f"[INFO] vlm model   = {LOCAL_VLM_MODEL}")
+    print(f"[INFO] reranker = {RERANKER_MODEL_NAME if USE_RERANKER else 'disabled'}")
+    print(f"[INFO] vlm model = {LOCAL_VLM_MODEL}")
 
     print("\n[STEP] Downloading dense retrieval model...")
     from sentence_transformers import SentenceTransformer
+
     dense_ok = False
     try:
         SentenceTransformer(
@@ -36,14 +34,15 @@ def main() -> None:
         )
         dense_ok = True
         print("[DONE] Dense retrieval model is cached.")
-    except Exception as e:
-        print(f"[WARN] Dense retrieval model download failed: {e}")
-        print("[WARN] Continuing to the VLM download step.")
+    except Exception as exc:
+        print(f"[WARN] Dense retrieval model download failed: {exc}")
+        print("[WARN] Continuing to the reranker/VLM steps.")
 
     reranker_ok = not USE_RERANKER
     if USE_RERANKER:
         print("\n[STEP] Downloading reranker model...")
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
         try:
             AutoTokenizer.from_pretrained(
                 RERANKER_MODEL_NAME,
@@ -59,12 +58,13 @@ def main() -> None:
             )
             reranker_ok = True
             print("[DONE] Reranker model is cached.")
-        except Exception as e:
-            print(f"[WARN] Reranker model download failed: {e}")
-            print("[WARN] Continuing to the VLM download step.")
+        except Exception as exc:
+            print(f"[WARN] Reranker model download failed: {exc}")
+            print("[WARN] Continuing to the VLM step.")
 
     print("\n[STEP] Downloading local VLM...")
-    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
     vlm_ok = False
     try:
         AutoProcessor.from_pretrained(
@@ -74,28 +74,17 @@ def main() -> None:
             token=HF_TOKEN or None,
             trust_remote_code=True,
         )
-
-        if "florence-2" in LOCAL_VLM_MODEL.lower():
-            AutoModelForCausalLM.from_pretrained(
-                LOCAL_VLM_MODEL,
-                cache_dir=cache_dir,
-                local_files_only=False,
-                low_cpu_mem_usage=True,
-                token=HF_TOKEN or None,
-                trust_remote_code=True,
-            )
-        else:
-            AutoModelForImageTextToText.from_pretrained(
-                LOCAL_VLM_MODEL,
-                cache_dir=cache_dir,
-                local_files_only=False,
-                low_cpu_mem_usage=True,
-                token=HF_TOKEN or None,
-            )
+        AutoModelForImageTextToText.from_pretrained(
+            LOCAL_VLM_MODEL,
+            cache_dir=cache_dir,
+            local_files_only=False,
+            low_cpu_mem_usage=True,
+            token=HF_TOKEN or None,
+        )
         vlm_ok = True
         print("[DONE] Local VLM is cached.")
-    except Exception as e:
-        print(f"[ERROR] Local VLM download failed: {e}")
+    except Exception as exc:
+        print(f"[ERROR] Local VLM download failed: {exc}")
 
     if dense_ok and reranker_ok and vlm_ok:
         print("\n[SUCCESS] All required Hugging Face models are cached locally.")

@@ -5,8 +5,8 @@ Usage:
     export VLM_PROVIDER="local_hf"
     python scripts/rag_vqa_pipeline.py
 
-Runs questions_v3.json against frames + retrieval_v3,
-and saves structured results to results/spike_results_v3.json.
+Runs questions.json against frames + retrieval,
+and saves structured results to results/spike_results.json.
 """
 
 import base64
@@ -33,7 +33,7 @@ from config import (
     VLM_PROVIDER,
     VLM_TEMPERATURE,
 )
-from retrieval_v3 import SurgicalRetriever
+from retrieval import SurgicalRetriever
 
 
 def encode_image_b64(image_path: str | Path) -> str:
