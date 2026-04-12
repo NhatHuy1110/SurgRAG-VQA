@@ -1,9 +1,13 @@
 """
-retrieval.py - Retrieval engine for SurgRAG-VQA.
+retrieval_v3.py - Retrieval v3 for SurgRAG-VQA.
 
-This module performs hierarchical retrieval over the current chunk corpus,
-combining field-aware BM25, dense retrieval, optional reranking, and
-question-aware priors.
+Core changes over v2:
+  - defaults to chunks_v3.jsonl
+  - indexes contextualized_text instead of raw text only
+  - retrieves on child chunks, expands to parent context for evidence packaging
+  - question-conditioned query building with question_type / extra terms
+  - field-aware BM25 + dense retrieval + reciprocal rank fusion
+  - adaptive selection with diversity filtering
 """
 
 import json
@@ -32,6 +36,8 @@ from config import (
     RETRIEVAL_EVAL_FILE,
     QUESTIONS_FILE,
 )
+
+
 FIELD_WEIGHTS = {
     "contextualized_text": 1.00,
     "doc_title": 0.40,
@@ -162,7 +168,7 @@ def _safe_console_text(text: str) -> str:
     return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
-class SurgicalRetriever:
+class SurgicalRetrieverV2:
 
     def __init__(
         self,
@@ -170,7 +176,8 @@ class SurgicalRetriever:
         dense_model: str = DENSE_MODEL_NAME,
         alpha: float = HYBRID_ALPHA,
     ):
-        chunks_path = chunks_path or str(CHUNKS_FILE)
+        default_chunks = CHUNKS_FILE
+        chunks_path = chunks_path or str(default_chunks)
 
         self.chunks: list[dict] = []
         with open(chunks_path, encoding="utf-8", errors="replace") as f:
@@ -180,7 +187,7 @@ class SurgicalRetriever:
                     self.chunks.append(json.loads(line))
 
         if not self.chunks:
-            raise ValueError("Chunk file is empty. Run build_corpus.py first.")
+            raise ValueError("Chunk file is empty. Run build_corpus_v3.py first.")
 
         self.alpha = alpha
         self.retrieval_mode = RETRIEVAL_MODE
@@ -781,11 +788,11 @@ class SurgicalRetriever:
         return {"recall": recall, "hits": hits, "total": total}
 
 
-
+SurgicalRetriever = SurgicalRetrieverV2
 
 
 def main():
-    retriever = SurgicalRetriever()
+    retriever = SurgicalRetrieverV2()
 
     test_queries = [
         ("What must be confirmed before clipping the cystic duct?", "safety_verification"),

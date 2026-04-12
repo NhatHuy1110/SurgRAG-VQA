@@ -1,852 +1,827 @@
-# PROJECT DESCRIPTION
+﻿# PROJECT DESCRIPTION - SurgRAG-VQA
 
-## 1. One-sentence summary
+## 1. Muc tieu cua du an
 
-This project is a safety-aware Surgical Retrieval-Augmented Visual Question Answering (RAG-VQA) pipeline for laparoscopic cholecystectomy that combines laparoscopic frames, guideline-grounded retrieval, and a defer-capable vision-language model to answer only when the visual and textual evidence is strong enough.
+`SurgRAG-VQA` la mot du an thu nghiem theo huong `Retrieval-Augmented Vision-Language Question Answering` cho boi canh `laparoscopic cholecystectomy` (cat tui mat noi soi).
 
-## 2. What the project is actually trying to do
+Muc tieu trung tam cua he thong la:
 
-The repository is not a generic medical VQA demo and not only a retrieval experiment. The current codebase is trying to answer a more specific research question:
+1. Nhan dau vao la mot frame noi soi trong qua trinh mo.
+2. Dat ra mot cau hoi lien quan den frame do.
+3. Truy hoi tri thuc phau thuat tu tap tai lieu chuyen mon.
+4. Ket hop `image evidence` + `retrieved knowledge` de tra loi.
+5. Neu thong tin khong du an toan thi he thong phai biet `defer` thay vi tra loi lieu.
 
-> Can a surgical AI assistant answer clinically motivated questions about a laparoscopic frame more safely when its answer is grounded in retrieved surgical evidence and when it is explicitly allowed to defer?
+Noi cach khac, day khong phai la mot he thong image captioning thong thuong, ma la mot pipeline danh cho `clinical reasoning under uncertainty`, trong do:
 
-That research question is reflected in three design decisions that appear consistently across the source code:
+- `Vision` dung de nhin frame.
+- `Retrieval` dung de bo sung ngu canh hoc thuat.
+- `Safety logic` dung de tranh tra loi sai trong cac tinh huong nguy hiem.
 
-1. The system is image-conditioned.
-   It starts from a laparoscopic frame rather than a purely text-only question.
+## 2. Bai toan ma chung ta dang giai
 
-2. The system is retrieval-grounded.
-   It does not trust the VLM to answer from image priors alone. It first retrieves evidence from curated surgical documents and anatomy references.
+Trong phau thuat noi soi, mot frame don le thuong:
 
-3. The system is safety-aware.
-   The VLM is instructed to return `DEFER` when anatomy is unclear, the image quality is poor, or the retrieved evidence is insufficient or contradictory.
+- chi cho thay mot phan nho cua truong mo,
+- co the mo, toi, nhieu khoi, mau, hay goc nhin xau,
+- khong phai luc nao cung du de khang dinh anatomy hoac phase,
+- va mot cau tra loi sai co the dan den suy luan nguy hiem.
 
-In other words, the project is exploring whether surgical frame understanding becomes more clinically useful when it is treated as a grounded decision-support problem instead of a plain captioning or pure recognition problem.
+Vi vay, bai toan cua chung ta khong chi la "model nhin thay gi?" ma la:
 
-## 3. High-level workflow of the current codebase
+1. Frame nay co du thong tin de tra loi an toan khong?
+2. Neu co, cau tra loi nao la hop ly nhat?
+3. Neu khong, he thong co biet `defer` dung luc khong?
 
-The code in the repository implements the following end-to-end workflow:
+Do la ly do du an duoc thiet ke xoay quanh 5 nhom cau hoi:
 
-1. A curated subset of surgical frames is stored in `data/frames/`.
-2. A blueprint and frame metadata are converted into task-ready annotations in `data/annotations/questions.json` and `data/annotations/retrieval_eval.json`.
-3. A curated surgical knowledge corpus is built from PDFs in `docs/raw/`.
-4. The corpus builder produces a structured chunk file at `docs/chunks/chunks.jsonl`.
-5. The retrieval module indexes those chunks and retrieves parent-expanded evidence for each question.
-6. The RAG-VQA pipeline combines:
-   - the frame,
-   - the question,
-   - the retrieved evidence,
-   - and a safety-oriented system prompt
-   and then calls either a local Hugging Face VLM, an OpenAI model, or a mock mode.
-7. The raw model response is parsed into a structured result with fields such as:
-   - answer text,
-   - confidence,
-   - defer flag,
-   - retrieved chunk IDs,
-   - evidence-card metadata,
-   - latency,
-   - and error state if the run failed.
-8. The evaluation script computes defer-related metrics, confidence distribution, question-type breakdowns, latency, and per-question summaries.
+- `recognition`
+- `workflow_phase`
+- `anatomy_landmark`
+- `safety_verification`
+- `risk_pitfall`
 
-This architecture means the project is not only about obtaining an answer. It is also about:
+## 3. Tong quan kien truc he thong
 
-- evidence provenance,
-- traceable retrieval,
-- calibrated abstention behavior,
-- and structured output for later analysis.
+Flow tong the cua du an duoc thiet ke theo chuoi sau:
 
-## 4. Current project state: what version is live now
+1. `Frame selection`
+   Chon 100 frame dai dien tu du lieu goc CholecSeg8k, co phan bo theo do kho, loai cau hoi va ti le defer mong muon.
 
-The real working state of the repository is centered on the `v3` setup, not the older `v1` or `v2` experiments.
+2. `Annotation generation`
+   Sinh scaffold cau hoi, gold answer stub va metadata retrieval cho tung frame da chon.
 
-The key active artifacts are:
+3. `Corpus building`
+   Xu ly PDF guideline/review/ontology, lam sach text, cat chunk, gan tag anatomy-risk-phase, tao corpus retrieval.
 
-- frames: `data/frames/`
-- questions: `data/annotations/questions.json`
-- retrieval eval set: `data/annotations/retrieval_eval.json`
-- retrieval corpus: `docs/chunks/chunks.jsonl`
-- main result file: `results/spike_results.json`
+4. `Retrieval`
+   Khi co cau hoi, he thong truy hoi evidence lien quan tu corpus bang BM25 + dense retrieval + reranking.
 
-The important scripts now are:
+5. `RAG-VQA inference`
+   VLM nhan frame + retrieved evidence + question va tra ve:
+   - `ANSWER: ... | CONFIDENCE: ...`
+   - hoac `DEFER: ...`
 
-- `scripts/build_corpus.py`
-- `scripts/generate_annotations.py`
-- `scripts/retrieval.py`
-- `scripts/rag_vqa_pipeline.py`
-- `scripts/evaluate.py`
-- `scripts/download_hf_models.py`
-- `scripts/config.py`
+6. `Evaluation`
+   Danh gia ket qua bang 3 tang:
+   - deterministic metrics,
+   - overlap metrics,
+   - VLM-as-Judge.
 
-There are still some legacy scripts in the repo such as `build_corpus.py`, `build_corpus.py`, `retrieval.py`, and some older helper scripts, but the current code path for the main experiment is the final stack listed above.
+## 4. Cau truc thu muc hien tai
 
-## 5. Main folders and their real role in the project
+### 4.1. Thu muc goc
 
-### `data/`
+- `data/`
+  Chua frame, annotation, va du lieu goc CholecSeg8k da tach.
 
-This is the main data workspace for frame-based experiments.
+- `docs/`
+  Chua tai lieu phau thuat dung lam knowledge base cho retrieval.
 
-- `data/cholec_raw/`
-  Stores the original raw surgical image data source used earlier in the pipeline. This is the raw reservoir from which curated subsets can be generated.
+- `results/`
+  Chua ket qua pipeline inference.
 
-- `data/frames/`
-  Stores the current curated frame subset used by the experiment.
-  Based on the scripts and surrounding files, this folder is intended to contain:
-  - selected frame images,
-  - frame metadata,
-  - a blueprint describing question type, difficulty, and defer labeling.
+- `scripts/`
+  Chua toan bo code chinh cua pipeline.
 
-- `data/annotations/`
-  Stores generated annotations that are used directly by retrieval and VQA:
-  - `questions.json`
-  - `retrieval_eval.json`
+- `notebooks/`
+  Thu muc notebooks phu tro.
 
-### `docs/`
+- `venv/`
+  Moi truong Python cuc bo.
 
-This is the retrieval knowledge area.
+- `requirements.txt`
+  Danh sach dependency can cho du an.
 
-- `docs/raw/`
-  Contains the source medical documents that define the retrieval corpus.
-  The current `config.py` manifest shows the project is built around these document groups:
-  - SAGES Safe Cholecystectomy guideline
-  - Tokyo Guidelines 2018 safe steps
-  - WSES bile duct injury guideline
-  - CVS review
-  - Rouviere's sulcus anatomy review
-  - CholecSeg8k class definitions
-  - WHO surgical safety checklist
+- `README.md`
+  Tai lieu huong dan nhanh.
 
-- `docs/chunks/`
-  Contains prebuilt chunk corpora.
-  The active output for the current system is `chunks.jsonl`.
+- `PROJECT_DESCRIPTION.md`
+  Tai lieu mo ta chi tiet du an. File nay da duoc viet lai tu dau.
 
-### `scripts/`
+### 4.2. Data assets hien dang ton tai tren local
 
-This folder contains the implementation of the full pipeline:
+#### `data/cholec_raw/`
 
-- corpus construction
-- annotation generation
-- retrieval
-- VLM execution
-- evaluation
-- orchestration
-- model pre-download
+Day la bo du lieu frame goc theo video. Moi video co nhieu folder con, moi folder thuong tuong ung mot moc frame, ben trong chua:
 
-### `results/`
+- frame noi soi,
+- watershed mask,
+- color mask.
 
-Stores runtime outputs, including:
+Du lieu nay la nguon dau vao cho `frames_selection.py`.
 
-- `spike_results.json`
-- evaluation outputs generated by `evaluate.py`
-- mock retrieval outputs when running in mock mode
+#### `data/frames/`
 
-### `notebooks/`
+Day la bo frame da duoc chon cua mot phien ban cu hon, hien dang co:
 
-Used for exploratory inspection and analysis outside the scripted pipeline.
+- `100` anh frame
+- `100` mask tuong ung
+- `frame_metadata.json`
+- `question_blueprint.json`
+- `selection_summary.json`
+- `validation_report.json`
 
-## 6. Configuration system and runtime control
+No cho thay mot pipeline selection/annotation da tung duoc chay va co artifact thuc.
 
-The central runtime configuration is in `scripts/config.py`.
+#### `data/frames_v3/`
 
-The configuration file does four important jobs:
+Thu muc nay la dich den ma code `v3` hien tai dang ky vong de su dung, nhung tren local hien tai chua co artifact day du.
 
-1. It defines canonical project paths.
-   This includes frames, annotations, raw docs, chunk files, and result files.
+#### `data/annotations/`
 
-2. It declares the retrieval corpus manifest.
-   Each document has metadata such as:
-   - `doc_id`
-   - `doc_title`
-   - `source_type`
-   - `trust_tier`
-   - `collection`
-   - `priority`
-   - `chunk_strategy`
-   - `chunk_size`
-   - `tags_hint`
+Tren local hien dang co:
 
-3. It defines retrieval defaults.
-   These include:
-   - `DENSE_MODEL_NAME`
-   - `USE_RERANKER`
-   - `RERANKER_MODEL_NAME`
-   - `RERANK_TOP_N`
-   - `HYBRID_ALPHA`
-   - `RETRIEVAL_TOP_K`
-   - `RETRIEVAL_MODE`
-   - `HF_CACHE_DIR`
-   - `HF_LOCAL_FILES_ONLY`
+- `questions.json`
+- `retrieval_eval.json`
 
-4. It defines VLM behavior.
-   These include:
-   - `VLM_PROVIDER`
-   - `OPENAI_VLM_MODEL`
-   - `LOCAL_VLM_MODEL`
-   - `LOCAL_VLM_MAX_NEW_TOKENS`
-   - `VLM_MAX_TOKENS`
-   - `VLM_TEMPERATURE`
+Trong khi code `v3` hien tai dang ky vong:
 
-The current default local model in code is:
+- `questions_v3.json`
+- `retrieval_eval_v3.json`
 
-```env
-LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
-```
+Dieu nay cho thay code va artifact hien tai chua dong bo hoan toan theo mot naming convention duy nhat.
 
-This means the present codebase is optimized around a local Hugging Face VLM workflow rather than the older Florence-specific branch that was previously experimented with.
+### 4.3. Knowledge assets hien dang ton tai
 
-## 7. What `generate_annotations.py` is doing
+#### `docs/raw/`
 
-The annotation generation script is more than a file converter. It turns frame-level metadata into structured VQA tasks.
+Bo tri thuc retrieval hien tai gom 7 PDF:
 
-It reads:
+1. `sages_safe_chole.pdf`
+2. `tokyo_guidelines_2018_safe_steps.pdf`
+3. `wses_2020_bdi_guideline.pdf`
+4. `cvs_review.pdf`
+5. `rouviere_sulcus.pdf`
+6. `cholecseg8k_classes.pdf`
+7. `who_surgical_checklist.pdf`
 
-- `data/frames/question_blueprint.json`
-- `data/frames/frame_metadata.json`
+Day la tap tai lieu da duoc chon de bao phu:
 
-and writes:
+- safe steps trong lap chole,
+- injury prevention,
+- bailout strategy,
+- anatomy landmarks,
+- visual ontology,
+- va mot phan safety checklist tong quat.
 
-- `data/annotations/questions.json`
-- `data/annotations/retrieval_eval.json`
+#### `docs/chunks/`
 
-The script currently encodes a specific task ontology with five question types:
+Tren local hien co:
 
-1. `recognition`
-2. `workflow_phase`
-3. `anatomy_landmark`
-4. `safety_verification`
-5. `risk_pitfall`
+- `chunks.jsonl`
 
-For each frame/question item, it constructs:
+So luong chunk thuc te hien co trong file nay la `1713`.
 
-- a question phrasing,
-- a difficulty label,
-- a `should_defer` flag,
-- a gold-answer stub,
-- notes containing upstream scoring context,
-- class detections,
-- and metadata such as source frame, video ID, and frame index.
+Moi dong trong `chunks.jsonl` la mot JSON chunk, co cac truong tieu bieu:
 
-This is important because the retrieval and RAG pipeline are not operating on generic free-form VQA. They are operating on a deliberately structured question space that tries to reflect clinically relevant reasoning categories.
-
-The retrieval-eval output also contains:
-
-- relevant keywords,
-- a minimum acceptable chunk needle,
-- expected collections,
-- difficulty,
-- and defer status.
-
-That means the eval set is already aligned with the retrieval design, not just with the final VLM answer stage.
-
-## 8. What `build_corpus.py` is doing and why it matters
-
-`build_corpus.py` is one of the most technically important parts of the repository because it determines the quality of the evidence the VLM will see.
-
-This script builds `docs/chunks/chunks.jsonl` and introduces several substantial upgrades over earlier versions.
-
-### 8.1 Core responsibilities
-
-The script:
-
-- reads source documents from `docs/raw/`
-- extracts page-level text from PDFs
-- cleans noisy extraction artifacts
-- detects sections and heading structure
-- chunks text into parent and child units
-- links children to parents
-- extracts semantic tags
-- builds contextualized retrieval text
-- creates section and document summaries
-- validates parent-child integrity
-- writes the final v3 corpus
-
-### 8.2 PDF extraction strategy
-
-The script tries `pypdf` first and then falls back to `pdfplumber` if:
-
-- extraction fails,
-- the text is too short,
-- or the extracted text looks garbled.
-
-This is a practical design choice for medical PDFs because guideline documents often vary in layout quality and encoding.
-
-### 8.3 Mojibake normalization
-
-The corpus builder includes explicit mojibake normalization logic.
-
-This is significant because PDF extraction often produces broken punctuation, quotation marks, or double-encoded characters. The script attempts to normalize those artifacts before chunking and indexing.
-
-### 8.4 Front-matter and junk removal
-
-The text cleaner is not just removing blank lines.
-It explicitly tries to remove:
-
-- page numbers
-- downloads/copyright boilerplate
-- DOI lines
-- URL lines
-- reference-heavy blocks
-- front matter such as author and affiliation blocks
-- table-of-contents-like material
-
-This improves retrieval quality because otherwise BM25 and dense retrieval can latch onto useless but frequent terms from article metadata rather than surgical content.
-
-### 8.5 Section detection and heading parsing
-
-The v3 builder tightens heading detection compared with earlier versions.
-
-It uses:
-
-- heading regex patterns,
-- heading rejection filters,
-- and heading-stack tracking
-
-to build section-level structure and heading paths such as hierarchical section context.
-
-This matters because retrieval quality is improved when the system knows not just the chunk text, but also the section in which that text appeared.
-
-### 8.6 Parent-child hierarchical chunking
-
-One of the key upgrades in v3 is the parent-child chunk hierarchy.
-
-The script creates:
-
-- parent chunks for broader evidence context
-- child chunks for finer-grained retrieval units
-
-The token defaults are currently:
-
-- child chunks: 250 tokens
-- parent chunks: 800 tokens
-- child overlap: 30 tokens
-- parent overlap: 80 tokens
-
-Parent-child linking is based on sentence-span overlap rather than naive equal splitting.
-
-This is a strong design choice because it allows:
-
-- precise retrieval on smaller evidence units
-- but richer evidence packaging for the final prompt
-
-That same design is later used directly by `retrieval.py`, which retrieves on children and expands to parents for prompt construction.
-
-### 8.7 Tag extraction
-
-The corpus builder extracts multiple tag families from chunk text:
-
-- `anatomy_tags`
-- `instrument_tags`
-- `action_tags`
-- `risk_tags`
-- `phase_scope`
-
-It uses word-boundary matching and guarded alias logic to reduce false positives from overly short aliases.
-
-These tags later become important retrieval signals in the field-aware BM25 and prior-boosting logic.
-
-### 8.8 Contextualized retrieval text
-
-Each chunk gets a `contextualized_text` field.
-
-This is one of the most important changes in the current retrieval design.
-
-Instead of retrieving on raw chunk text alone, the retriever can use a richer representation that includes:
-
-- document title
-- section title / heading path
-- collection context
-- selected tags
-- and the actual chunk content
-
-This makes the retrieval stage more semantically informed and less brittle.
-
-### 8.9 Summary levels
-
-The script also creates:
-
-- `section_summary` chunks
-- `document_summary` chunks
-
-These are useful for future experiments even if the current retrieval system focuses mainly on child-first retrieval.
-
-### 8.10 Validation
-
-The builder ends with a validation pass that checks:
-
-- how many child chunks received `parent_id`
-- parent-child text consistency
-- obvious tag false positives
-- remaining mojibake
-
-This indicates that the corpus builder is not just a preprocessing script. It is already treated as a measurable quality-control stage.
-
-## 9. What `retrieval.py` is doing
-
-`retrieval.py` is the retrieval engine that the current RAG-VQA system actually uses.
-
-The file implements a retrieval design with several layers:
-
-### 9.1 Child-first indexing, parent-expanded evidence
-
-The retriever:
-
-- loads `chunks.jsonl` if present
-- indexes mainly `child` chunks for retrieval
-- then expands selected matches to their linked `parent` chunks for downstream evidence packaging
-
-This is a key architectural decision because it balances:
-
-- retrieval precision
-- evidence completeness
-- and prompt readability
-
-### 9.2 Field-aware BM25
-
-The retriever does not treat each chunk as one flat string for BM25.
-It builds BM25 indexes over multiple fields:
-
-- `contextualized_text`
+- `chunk_id`
+- `doc_id`
 - `doc_title`
+- `source_type`
+- `trust_tier`
+- `collection`
+- `priority`
 - `section_title`
+- `section_id`
+- `heading_path`
+- `page_start`, `page_end`
+- `level`
 - `chunk_type`
 - `anatomy_tags`
-- `risk_tags`
-- `phase_scope`
 - `instrument_tags`
 - `action_tags`
+- `risk_tags`
+- `phase_scope`
+- `text`
+- `token_count`
+- `contextualized_text`
+- `child_ids`
 
-Each field has an explicit weight.
+Code `v3` hien tai dang huong toi `chunks_v3.jsonl`, nhung artifact local van dang la `chunks.jsonl`.
 
-This means sparse retrieval is already knowledge-structured rather than plain bag-of-words matching.
+### 4.4. Ket qua inference hien dang ton tai
 
-### 9.3 Dense retrieval
+Thu muc `results/` hien dang co:
 
-When enabled, the retriever uses a sentence-transformer embedding model over `contextualized_text`.
+- `spike_results_v3.json`
 
-The current intended dense model from the environment examples is:
+Day la artifact ket qua inference gan nhat hien co tren local.
 
-```env
-DENSE_MODEL_NAME=BAAI/bge-large-en-v1.5
-```
+Thong ke nhanh tren file nay:
 
-Embeddings are normalized and indexed with FAISS for inner-product search.
+- Tong so sample: `100`
+- So sample he thong du doan `defer`: `0`
+- Phan bo confidence:
+  - `high`: 12
+  - `medium`: 2
+  - `low`: 2
+  - `unknown`: 84
+- So response rong (`raw_response` empty): `30`
+- So chunk retrieval trung binh moi cau hoi: `4.72`
 
-### 9.4 Optional reranking
+Thong ke nay rat quan trong vi no cho thay:
 
-If `USE_RERANKER=1`, the retriever loads a reranker model and reranks the top candidate pool.
+- pipeline da chay va sinh duoc ket qua,
+- nhung quality cua output VLM trong dot inference do con rat yeu,
+- dac biet o kha nang follow format va defer.
 
-The current intended reranker is:
+## 5. Cac script chinh va vai tro cua tung script
 
-```env
-RERANKER_MODEL_NAME=BAAI/bge-reranker-large
-```
+Toan bo logic chinh cua du an nam trong thu muc `scripts/`.
 
-This gives the system a three-stage retrieval stack:
+### 5.1. `scripts/config.py`
 
-1. sparse candidate scoring
-2. dense candidate scoring
-3. optional neural reranking
+Day la file cau hinh trung tam cua he thong.
 
-### 9.5 Query conditioning by question type
+No dinh nghia:
 
-This is one of the strongest parts of the current project design.
+- duong dan cac thu muc/chinh file,
+- danh sach tai lieu retrieval (`RAG_DOCUMENTS`),
+- chunking config,
+- retrieval config,
+- VLM config,
+- evaluation config.
 
-The retriever uses `question_type` hints to adjust:
+Nhung gia tri quan trong hien tai:
 
-- preferred collections
-- preferred chunk types
-- extra query terms
+- `FRAMES_DIR = data/frames_v3`
+- `QUESTIONS_FILE = data/annotations/questions_v3.json`
+- `RETRIEVAL_EVAL_FILE = data/annotations/retrieval_eval_v3.json`
+- `CHUNKS_FILE = docs/chunks/chunks_v3.jsonl`
+- `RESULTS_FILE = results/spike_results_v3.json`
 
-For example:
+Ve model:
 
-- `recognition` favors visual ontology and anatomy-landmark content
-- `safety_verification` favors safe-chole and complication-management evidence
-- `risk_pitfall` favors complication and bailout-oriented evidence
+- Dense retrieval model mac dinh: `sentence-transformers/all-MiniLM-L6-v2`
+- Reranker mac dinh: `BAAI/bge-reranker-large`
+- OpenAI VLM mac dinh: `gpt-4o`
+- Local VLM mac dinh: `llava-hf/llava-1.5-7b-hf`
+- Judge model mac dinh: `Qwen/Qwen2.5-VL-7B-Instruct`
 
-This means retrieval is not generic across tasks. It is explicitly conditioned on the clinical intent of the question.
+Y nghia:
 
-### 9.6 Query expansion using detected classes
+- `config.py` la noi quyet dinh "pipeline mong cho artifact o dau" va "he thong dang duoc cau hinh theo mode nao".
+- Day cung la noi the hien ro nhat rang code hien dang theo naming convention `v3`.
 
-If a frame has `classes_detected`, the retriever maps class labels into additional query terms.
+### 5.2. `scripts/frames_selection.py`
 
-For example:
+Day la script chon `100` frame tu bo du lieu goc de xay bo benchmark VQA.
 
-- `grasper`
-- `cystic_duct`
-- `cystic_artery`
-- `hepatic_vein`
-- `liver_ligament`
+Tu tuong thiet ke:
 
-can be expanded into anatomical or operative terms that help the retriever search for more relevant evidence.
+1. Di qua `data/cholec_raw/`.
+2. Doc `watershed mask` thay vi doan class bang color mask.
+3. Trich xuat class semantic tren moi frame.
+4. Tinh cac feature:
+   - quality score,
+   - do sang,
+   - contrast,
+   - sharpness,
+   - edge density,
+   - semantic coverage.
+5. Uoc luong:
+   - `difficulty`
+   - `question_type`
+   - `defer likelihood`
+6. Chon frame bang bucket strategy de dat phan bo muc tieu.
 
-This is an important multimodal bridge in the system:
+Phan bo muc tieu hien duoc encode trong script:
 
-- vision-side metadata from segmentation/class detection
-- influences text-side retrieval behavior
+- `recognition = 15`
+- `workflow_phase = 20`
+- `anatomy_landmark = 25`
+- `safety_verification = 25`
+- `risk_pitfall = 15`
 
-### 9.7 Fusion and priors
+Do kho muc tieu:
 
-The retriever combines sparse and dense rankings via reciprocal rank fusion, then adjusts scores using:
+- `easy = 30`
+- `medium = 40`
+- `hard = 30`
 
-- collection priority
-- trust tier
-- preferred collection membership
-- preferred chunk types
-- low-value section penalties
-- question-type-specific boosts or penalties
+So frame can `defer` muc tieu:
 
-This makes the retrieval stage highly engineered rather than merely off-the-shelf.
+- `DEFER_TARGET = 25`
 
-### 9.8 Adaptive evidence selection
+Script nay sinh ra cac artifact quan trong:
 
-After ranking, the retriever performs adaptive selection with diversity constraints.
+- frame da copy sang thu muc output,
+- `frame_metadata.json`
+- `question_blueprint.json`
+- `selection_summary.json`
+- `validation_report.json`
 
-It tries to avoid:
+Luu y:
 
-- too many chunks from the same parent
-- too much duplication from the same section
+- Code `v3` hien tai ghi vao `data/frames_v3`.
+- Artifact local cu hien dang nam o `data/frames`.
 
-This is important because VLM prompts degrade quickly if the top evidence is redundant.
+### 5.3. `scripts/generate_annotations.py`
 
-### 9.9 Evidence packaging
+Day la script chuyen `frame_metadata + question_blueprint` thanh bo annotation co cau truc cho pipeline.
 
-The final retrieved objects contain more than raw text.
-Each packaged item can include:
+Vai tro chinh:
 
-- `matched_chunk_id`
-- `evidence_chunk_id`
-- `matched_level`
-- `evidence_level`
-- `evidence_text`
-- `evidence_raw_text`
-- `evidence_card`
+1. Doc `question_blueprint.json`
+2. Doc `frame_metadata.json`
+3. Sinh cau hoi theo `question_type`
+4. Sinh `gold_answer_stub`
+5. Sinh `retrieval keywords`
+6. Xuat:
+   - `questions_v3.json`
+   - `retrieval_eval_v3.json`
 
-This packaging is what makes the RAG pipeline traceable and inspectable.
+Noi dung annotation gom:
 
-### 9.10 Current observed state
+- `qid`
+- `frame`
+- `question`
+- `question_type`
+- `difficulty`
+- `should_defer`
+- `gold_answer`
+- `notes`
+- `annotation_status`
+- `source_frame`
+- `video_id`
+- `frame_index`
+- `classes_detected`
 
-From our recent workflow, retrieval has already been brought to a strong state and reached full retrieval success on the current evaluation setup.
+Y nghia:
 
-That means the current bottleneck has likely shifted away from retrieval and more toward:
+- Script nay la cau noi giua `frame benchmark` va `RAG-VQA inference`.
+- Day la noi ma benchmark duoc `dong goi` thanh bo cau hoi co the chay pipeline.
 
-- VLM answer quality
-- defer calibration
-- prompt robustness
-- and answer evaluation quality
+Local hien dang co bo cu:
 
-## 10. What `rag_vqa_pipeline.py` is doing now
+- `questions.json`
+- `retrieval_eval.json`
 
-This is the script that runs the actual frame + retrieval + VLM pipeline.
+Trong khi script hien tai se tao bo moi:
 
-The current version of the file has already been cleaned to align with the present project direction.
+- `questions_v3.json`
+- `retrieval_eval_v3.json`
 
-### 10.1 Current pipeline behavior
+### 5.4. `scripts/build_corpus.py`
 
-For each question row in `questions.json`, the script:
+Day la script xay knowledge base retrieval tu bo PDF phau thuat.
 
-1. loads the frame from `data/frames/`
-2. retrieves evidence using `retrieval.SurgicalRetriever`
-3. passes `question_type` and `classes_detected` into retrieval
-4. builds a safety-aware system prompt containing retrieved evidence
-5. calls the selected VLM provider
-6. parses the raw answer into structured fields
-7. writes the result to the main results file
+Day la mot trong nhung thanh phan quan trong nhat cua du an.
 
-### 10.2 Evidence formatting
+Nhung gi script nay lam:
 
-The prompt includes labeled evidence blocks with metadata such as:
+1. Doc PDF bang `pypdf` hoac `pdfplumber`.
+2. Lam sach text:
+   - bo junk lines,
+   - bo front matter,
+   - cat references,
+   - chuan hoa mojibake,
+   - bo noise do OCR/encoding.
+3. Detect section va heading.
+4. Chia thanh `parent chunks` va `child chunks`.
+5. Tao:
+   - `section summaries`
+   - `document summary`
+6. Gan metadata retrieval:
+   - `chunk_type`
+   - `collection`
+   - `trust_tier`
+   - tags anatomy/instrument/action/risk/phase
+7. Tao `contextualized_text` cho retrieval.
+8. Validate chunk graph.
 
-- document title
-- retrieval score
-- collection
-- chunk type
-- section title
+Script su dung manifest tai lieu tu `config.py`, trong do moi document co:
 
-This is important for transparency and potentially improves the VLM's ability to distinguish high-level evidence sources.
+- `doc_id`
+- `doc_title`
+- `source_type`
+- `trust_tier`
+- `collection`
+- `priority`
+- `chunk_strategy`
+- `chunk_size`
+- `tags_hint`
 
-### 10.3 VLM modes
+Muc tieu cua corpus khong chi la cat text nho ra, ma la tao retrieval unit co y nghia phau thuat, co provenance va co semantic tags.
 
-The pipeline currently supports three runtime modes:
+Artifact dich den theo code hien tai:
 
-- `mock_vlm`
+- `docs/chunks/chunks_v3.jsonl`
+
+Artifact local hien co:
+
+- `docs/chunks/chunks.jsonl`
+
+### 5.5. `scripts/retrieval.py`
+
+Day la engine truy hoi tri thuc cho du an.
+
+Lop trung tam:
+
+- `SurgicalRetrieverV2`
+
+Y tuong retrieval:
+
+1. Tai chunks tu `CHUNKS_FILE`.
+2. Index `contextualized_text` thay vi chi index `raw text`.
+3. Uu tien `child chunks` cho retrieval.
+4. Build `field-aware BM25` tren nhieu truong:
+   - `contextualized_text`
+   - `doc_title`
+   - `section_title`
+   - `chunk_type`
+   - `anatomy_tags`
+   - `risk_tags`
+   - `phase_scope`
+   - `instrument_tags`
+   - `action_tags`
+5. Neu co dense model thi build dense index bang SentenceTransformers + FAISS.
+6. Neu bat reranker thi rerank top candidates.
+7. Ap dung prior theo:
+   - `question_type`
+   - `collection`
+   - `chunk_type`
+   - `trust_tier`
+   - `collection priority`
+8. Expand child chunk len parent evidence de VLM doc evidence co context tot hon.
+
+Script nay cung encode kien thuc domain bang:
+
+- `QUESTION_TYPE_HINTS`
+- `TERM_EXPANSIONS`
+- `CLASS_TERM_MAP`
+- `LOW_VALUE_SECTION_PATTERNS`
+- `LOW_VALUE_TEXT_PATTERNS`
+
+Y nghia:
+
+- Retrieval cua du an khong phai la keyword search don gian.
+- No da co logic domain-specific cho surgery va cho tung loai cau hoi.
+
+### 5.6. `scripts/rag_vqa_pipeline.py`
+
+Day la script chinh de chay `inference`.
+
+Flow trong script nay:
+
+1. Doc `questions_v3.json` tu `QUESTIONS_FILE`.
+2. Voi tung cau hoi:
+   - tim frame,
+   - goi retriever,
+   - tao prompt,
+   - goi VLM,
+   - parse output,
+   - luu ket qua.
+3. Cuoi cung ghi file `spike_results_v3.json`.
+
+Pipeline nay ho tro 3 mode:
+
 - `openai`
 - `local_hf`
+- `mock_vlm`
 
-The local Hugging Face branch is now cleaner and aligned with the current intended workflow.
-Earlier Florence-specific logic was removed from this main pipeline because it was no longer part of the active experiment path.
+#### Doi voi retrieval + prompt
 
-### 10.4 Local HF behavior
+Ban sua gan nhat cua pipeline da duoc nang cap theo huong:
 
-The local HF path:
+- prompt ngan hon,
+- chi dua so evidence can thiet,
+- co `question-type hint`,
+- bo score am ra khoi prompt,
+- co `compact retry` neu model tra output xau,
+- co parser manh hon de bat:
+  - bracketed confidence,
+  - freeform defer,
+  - `ANSWER: DEFER`,
+  - template leak,
+  - empty response,
+  - garbage response.
 
-- loads `AutoProcessor`
-- loads `AutoModelForImageTextToText`
-- uses the configured Hugging Face cache and token settings
-- pushes tensors to GPU when available
-- and generates deterministic outputs with `do_sample=False`
+#### Doi voi local VLM
 
-### 10.5 Response parsing
+Ban pipeline hien tai da support tot hon cho:
 
-The response parser extracts:
+- `LLaVA`
+- `Qwen2-VL`
+- `Qwen2.5-VL`
 
-- raw response text
-- defer flag
-- confidence label
-- parsed answer
+Y nghia:
 
-It now handles formatting more robustly than before and is less brittle when the model returns slightly different casing.
+- Day la thanh phan hop nhat toan bo tri thuc retrieval, image reasoning, va output formatting.
+- Chat luong thuc te cua he thong phu thuoc rat manh vao file nay.
 
-### 10.6 Error handling
+### 5.7. `scripts/evaluate.py`
 
-The current version also fixes an earlier logic issue where runtime exceptions could be stored without a proper `error` field and then be counted incorrectly in the run summary.
+Day la script danh gia 3 tang cho output cua pipeline.
 
-Now, failed items are explicitly marked as errors and are counted correctly in the final summary.
+#### Tier 1 - Deterministic metrics
 
-### 10.7 Retrieval trace in output
+Bao gom:
 
-The result objects now include not only `retrieved_chunks`, but also:
-
-- `retrieved_matched_chunks`
-- `retrieved_evidence_chunks`
-- `retrieved_scores`
-- `retrieved_previews`
-- `retrieved_evidence_cards`
-
-This is extremely helpful for later debugging because retrieval in v3 is hierarchical: the matched child chunk is not always the same as the packaged parent evidence chunk.
-
-## 11. What `evaluate.py` is doing
-
-The evaluation script is designed mainly around defer-aware analysis rather than conventional answer-only accuracy.
-
-It computes:
-
-- total valid results
-- answered vs deferred counts
-- defer TP / FP / FN / TN
-- defer precision
-- defer recall
-- defer F1
+- defer alignment
+- format quality
 - confidence distribution
-- breakdown by question type
-- breakdown by difficulty
-- average latency
-- per-question summary rows
+- latency
+- retrieval statistics
+- breakdown theo `question_type` va `difficulty`
 
-This reflects the project's actual objective well:
+#### Tier 2 - Overlap metrics
 
-- a missed defer is treated as dangerous
-- an unnecessary defer is treated as overly cautious
-- and defer quality is measured explicitly
+Bao gom:
 
-That is a good fit for surgical decision-support research, where abstention behavior matters as much as answer generation.
+- BLEU-1
+- BLEU-4
+- METEOR
+- ROUGE-L
+- keyword recall
 
-## 12. What `download_hf_models.py` is doing
+Muc tieu cua tang nay la do overlap text, nhung chi la mot proxy metric.
 
-This utility script pre-downloads the models required for local HF execution:
+#### Tier 3 - VLM-as-Judge
+
+Dung `Qwen2.5-VL-7B-Instruct` lam judge de cham:
+
+- `correctness_score`
+- `safety_score`
+- `grounding_score`
+- `defer_score`
+- verdict:
+  - `correct`
+  - `acceptable`
+  - `unsafe`
+  - `should_defer`
+
+Script nay con co kha nang:
+
+- luu report markdown,
+- luu metrics json,
+- luu per-question csv,
+- ve plots.
+
+Y nghia:
+
+- Day la script giup project vuot ra khoi muc `demo output` de tro thanh mot he thong co kha nang phan tich, benchmark va bao cao.
+
+### 5.8. `scripts/download_hf_models.py`
+
+Script nay dung de pre-download toan bo model Hugging Face can cho du an:
 
 - dense retrieval model
-- optional reranker model
+- reranker model
 - local VLM
+- judge VLM
 
-Its purpose is to let the server cache models before the main pipeline runs.
+Nhu vay project co the:
 
-This matters operationally because the project uses several large Hugging Face assets, and downloading them lazily during the first full run is slower and harder to debug.
+- giam delay trong lan chay dau,
+- tranh loi download giua chung,
+- va tien cho chay offline neu model da duoc cache.
 
-The script respects:
+## 6. Cac file du lieu trung gian quan trong
 
-- `HF_CACHE_DIR`
-- `HF_TOKEN`
-- current retrieval model settings
-- current local VLM setting
+De hieu du an, can xem toan bo he thong nhu mot chuoi bien doi artifact.
 
-Operationally, this script is part of the deployment workflow, not just a convenience helper.
+### 6.1. Artifact benchmark tu frame selection
 
-## 13. What we have effectively built so far
+- `frame_metadata.json`
+  Mo ta quality, classes, difficulty, question-type score, defer score tren moi frame da chon.
 
-Looking at the repository as a whole, the work completed so far is much more than wiring together a VLM and some PDFs.
+- `question_blueprint.json`
+  Khai bao frame nao gan voi `question_type`, `difficulty`, `should_defer` nao.
 
-We have effectively built:
+- `selection_summary.json`
+  Tong hop phan bo benchmark.
 
-### 13.1 A task formulation layer
+- `validation_report.json`
+  Bao cao sanity check sau khi selection xong.
 
-The project has a defined ontology of question types, difficulty, and defer expectation.
+### 6.2. Artifact annotation
 
-### 13.2 A curated retrieval corpus
+- `questions.json` hoac `questions_v3.json`
+  File dau vao cho pipeline inference.
 
-The system does not retrieve from the open internet or arbitrary documents.
-It retrieves from a deliberately selected surgical knowledge set with trust tiers and document collections.
+- `retrieval_eval.json` hoac `retrieval_eval_v3.json`
+  File phuc vu danh gia retrieval.
 
-### 13.3 A structured retrieval engine
+### 6.3. Artifact knowledge base
 
-The retriever is:
+- `chunks.jsonl` hoac `chunks_v3.jsonl`
+  Corpus retrieval da duoc cat chunk va gan metadata.
 
-- field-aware
-- query-conditioned
-- hierarchy-aware
-- evidence-packaging aware
-- and optimized for clinically themed question types
+### 6.4. Artifact inference
 
-### 13.4 A grounded multimodal answer pipeline
+- `spike_results_v3.json`
+  Ket qua chay VQA tren 100 sample.
 
-The VLM is not answering from image alone.
-It is answering with access to retrieved surgical evidence and with explicit safety instructions.
+Moi row thuong co:
 
-### 13.5 A defer-aware evaluation mindset
+- `qid`
+- `frame`
+- `question`
+- `retrieved_chunks`
+- `retrieved_scores`
+- `retrieved_previews`
+- `raw_response`
+- `parsed_answer`
+- `confidence`
+- `is_defer`
+- `question_type`
+- `difficulty`
+- `should_defer`
+- va trong ban pipeline moi co them:
+  - `parse_flags`
+  - `prompt_variant`
+  - `prompt_evidence_count`
+  - `local_model_kind`
 
-The project already treats abstention as a first-class target rather than an afterthought.
+## 7. Trang thai du an hien tai tren local
 
-That is a meaningful research framing choice, especially for surgical support.
+Day la phan rat quan trong de report trung thuc.
 
-## 14. Strengths of the current system
+### 7.1. Nhung gi chung ta da build duoc
 
-Based on the current source code and recent progress, the main strengths of the project are:
+Chung ta da co:
 
-### 14.1 Retrieval is strongly engineered
+1. Mot bo frame benchmark 100 sample da duoc chon.
+2. Mot bo annotation 100 question co cau truc ro rang.
+3. Mot corpus retrieval tu 7 tai lieu phau thuat, gom 1713 chunks.
+4. Mot retrieval engine co:
+   - BM25 field-aware,
+   - dense retrieval,
+   - reranking,
+   - question-type priors,
+   - child-to-parent evidence packaging.
+5. Mot pipeline RAG-VQA co the:
+   - doc frame,
+   - retrieve evidence,
+   - goi VLM,
+   - parse output,
+   - luu ket qua.
+6. Mot he thong evaluation 3 tang.
+7. Ban sua moi nhat cua pipeline da tang kha nang:
+   - compact prompt,
+   - parser robust,
+   - retry compact mode,
+   - support local Qwen-VL tot hon.
 
-The retrieval stack is not naive.
-It includes:
+### 7.2. Trang thai artifact hien tai
 
-- document curation
-- section structure
-- parent-child chunking
-- tag extraction
-- contextualized text
-- query-type priors
-- class-conditioned expansion
-- reranking
-- and adaptive evidence selection
+Ve mat artifact, local hien dang o trang thai `co du rat nhieu thanh phan da build, nhung chua dong bo naming hoan toan giua code v3 va artifact cu`.
 
-That is likely one of the strongest parts of the project right now.
+Cu the:
 
-### 14.2 The project is clinically framed rather than technically generic
+- Code hien tai mong cho:
+  - `data/frames_v3`
+  - `questions_v3.json`
+  - `retrieval_eval_v3.json`
+  - `chunks_v3.jsonl`
 
-Question types such as `safety_verification` and `risk_pitfall` are much closer to real surgical-support reasoning than generic VQA labels.
+- Artifact local hien dang co:
+  - `data/frames`
+  - `questions.json`
+  - `retrieval_eval.json`
+  - `chunks.jsonl`
 
-### 14.3 The defer mechanism is baked into the pipeline design
+Dieu nay co nghia la:
 
-The model is explicitly instructed to prefer safety over forced answers.
+- ve mat kien truc, pipeline da ro rang,
+- ve mat artifact, local van dang o giai doan giao thoa giua `bo cu` va `code v3`.
 
-### 14.4 The outputs are inspectable
+### 7.3. Van de da duoc phat hien tu ket qua inference truoc do
 
-Because the pipeline stores evidence cards, chunk IDs, and parsed responses, it is possible to audit why a result happened.
+Dot inference gan nhat bang local VLM cu cho thay cac van de lon:
 
-## 15. Current limitations visible from the codebase
+1. rat nhieu output rong,
+2. rat nhieu confidence parse thanh `unknown`,
+3. he thong gan nhu khong detect duoc `defer`,
+4. format output khong on dinh,
+5. quality cua JSON ket qua rat xau de dua vao evaluation nghiem tuc.
 
-Even though the project is in a good state, the current codebase still exposes some meaningful limitations.
+Do la ly do `rag_vqa_pipeline.py` da duoc cai tien them ve:
 
-### 15.1 Evaluation still emphasizes defer metrics more than semantic answer correctness
+- prompt design,
+- parser logic,
+- retry strategy,
+- local model support.
 
-The evaluation script is good for abstention analysis, but it does not yet perform robust semantic matching between predicted answers and gold answers.
+## 8. Flow thuc te ma du an muon dat toi
 
-That means the current system is better at answering:
+Neu mo ta du an theo flow ly tuong, thi chuoi thuc thi se la:
 
-- "Did the model defer correctly?"
+1. Chay `frames_selection.py`
+   de tao bo frame benchmark moi trong `data/frames_v3/`.
 
-than:
+2. Chay `generate_annotations.py`
+   de tao:
+   - `questions_v3.json`
+   - `retrieval_eval_v3.json`
 
-- "Was the content of the non-defer answer clinically correct?"
+3. Chay `build_corpus.py`
+   de tao `chunks_v3.jsonl`.
 
-### 15.2 Gold answers are still scaffold-like in many places
+4. Chay `rag_vqa_pipeline.py`
+   de tao `spike_results_v3.json`.
 
-The annotation generator creates strong structured stubs, but many `gold_answer` values still look like draft supervision rather than expert-finalized labels.
+5. Chay `evaluate.py`
+   de tao:
+   - report markdown
+   - metrics json
+   - per-question csv
+   - plots
 
-This is acceptable for a feasibility spike, but it limits how strong final answer-evaluation claims can be.
+Nghia la:
 
-### 15.3 Prompting is still fairly generic once evidence is inserted
+- `frame benchmark` la nguon cua question set,
+- `document corpus` la nguon cua retrieval,
+- `pipeline` la noi gap nhau giua image va text knowledge,
+- `evaluation` la noi ket qua duoc do luong.
 
-The current RAG prompt is safety-aware, but there is still room to tailor prompting more specifically by question type.
+## 9. Nhung diem manh cua he thong hien tai
 
-For example:
+### 9.1. Da co phan retrieval co tinh domain-specific
 
-- recognition questions might need shorter visual identification prompts
-- safety verification questions might need stricter criteria-oriented prompts
-- risk questions might need stronger hazard-focused prompting
+Du an khong dung retrieval tong quat thuong.
+No co:
 
-### 15.4 The deployment layer is still partly experimental
+- question-type priors,
+- collection priority,
+- trust-tier boost,
+- anatomy/risk/phase tag weighting,
+- class-term expansion.
 
-The main v3 pipeline is aligned, but some supporting scripts and text in the repo still contain traces of earlier versions or assumptions from prior experiments.
+Day la mot diem manh rat quan trong de report.
 
-This does not block the current work, but it means the repository still benefits from gradual cleanup and harmonization.
+### 9.2. Da co benchmark task formulation ro rang
 
-## 16. What the project is most ready for next
+Bo benchmark 100 sample da duoc thiet ke co chu dich:
 
-Because retrieval is now strong, the most promising next optimization directions are likely:
+- 5 loai cau hoi,
+- 3 muc do kho,
+- 25 sample should-defer.
 
-### 16.1 Improve answer quality after retrieval
+Day la co so de danh gia he thong co y nghia hon rat nhieu so voi viec chon frame ngau nhien.
 
-The next gains may come from:
+### 9.3. Da co evaluation 3 tang
 
-- prompt design
-- evidence compression
-- evidence ordering
-- and model choice
+He thong evaluation khong chi dung textual overlap, ma da co:
 
-### 16.2 Improve defer calibration
+- metrics deterministic,
+- overlap metrics,
+- VLM-as-Judge co safety-aware rubric.
 
-The project already supports defer behavior, so now the natural next question is:
+Day la mot diem rat tot cho bai report hoc thuat.
 
-> When is the system deferring too little, and when is it deferring too much?
+### 9.4. Da xac dinh ro bai toan `safe abstention`
 
-That suggests work on:
+He thong duoc thiet ke theo huong:
 
-- thresholding
-- prompt constraints
-- question-type-specific defer rules
-- uncertainty heuristics from visual quality or retrieval quality
+- khong ep model phai tra loi moi luc,
+- ma cho phep model `defer` khi khong du bang chung.
 
-### 16.3 Strengthen answer-side evaluation
+Trong boi canh phau thuat, day la mot huong rat hop ly va co gia tri nghien cuu.
 
-The repository would benefit from more systematic scoring for:
+## 10. Nhung han che hien tai
 
-- answer correctness
-- groundedness to retrieved evidence
-- hallucination tendency
-- and per-question-type failure modes
+De report trung thuc, day la nhung han che chinh:
 
-### 16.4 Tighten repo consistency
+1. Artifact local va naming convention `v3` chua dong bo hoan toan.
+2. Dot inference cu bang `LLaVA-1.5-7B` cho output quality thap.
+3. Khau answer generation hien van phu thuoc rat manh vao chat luong model VLM.
+4. Gold answers trong annotation van mang tinh scaffold, chua phai final expert-validated references.
+5. Mot so artifact `v3` chua duoc tai tao day du tren local moi.
 
-Now that the main path is clearly v3, a good cleanup direction is to make all helper scripts, reports, and documentation fully consistent with:
+## 11. Neu can giai thich ngan gon cho professor
 
-- `chunks`
-- `questions`
-- `retrieval`
-- `spike_results`
-- and the local Hugging Face deployment path
+Co the mo ta du an bang 4 cau sau:
 
-## 17. Practical summary of what we have done together
+1. Chung toi dang xay mot he thong `Surgical RAG-VQA` cho frame noi soi cat tui mat.
+2. He thong ket hop `visual reasoning` voi `retrieved surgical knowledge` tu guideline/review de tra loi cau hoi ve anatomy, workflow, safety va risk.
+3. Benchmark hien tai gom 100 frame duoc chon co chu dich, 5 nhom cau hoi, 3 muc do kho, va 25 truong hop can kha nang `defer`.
+4. Chung toi da xay xong khung pipeline gom frame selection, annotation generation, corpus building, retrieval, VQA inference va evaluation 3 tang; hien tai dang o giai doan nang cap chat luong inference va dong bo artifact `v3`.
 
-At this point, the project has evolved into a coherent surgical RAG-VQA prototype with:
+## 12. Ket luan
 
-- a structured `v3` frame/annotation setup
-- a substantially upgraded corpus builder
-- a much stronger retrieval engine
-- a cleaned local-HF RAG pipeline
-- explicit defer-aware outputs
-- and an evaluation path designed for feasibility analysis
+`SurgRAG-VQA` hien tai khong con la mot y tuong roi rac. No da la mot he thong co cau truc ro rang gom:
 
-In practical terms, the current codebase now supports this full experiment:
+- benchmark construction,
+- surgical document corpus,
+- retrieval engine,
+- VLM inference pipeline,
+- va evaluation framework.
 
-1. prepare frame metadata and question blueprint
-2. generate `questions` and `retrieval_eval`
-3. build `chunks` from curated surgical PDFs
-4. retrieve evidence with `retrieval`
-5. answer with a local Hugging Face VLM or mock/openai mode
-6. parse answer vs defer behavior
-7. evaluate the run with explicit safety-oriented metrics
+Noi dung quan trong nhat can nho:
 
-That is already a strong foundation for the next stage of optimization.
+1. Chung ta da build duoc gan nhu day du toan bo pipeline end-to-end.
+2. Diem nghen lon nhat hien tai khong nam o retrieval architecture, ma nam o:
+   - dong bo artifact `v3`,
+   - va chat luong answer generation cua VLM.
+3. Nen tang nghien cuu cua du an da co san:
+   - benchmark,
+   - corpus,
+   - retrieval,
+   - evaluation.
 
-## 18. Final interpretation
+Vi vay, trang thai hien tai cua du an co the tom tat nhu sau:
 
-The current repository represents a transition point in the project:
-
-- retrieval is no longer the weakest link
-- the pipeline structure is much more mature
-- and the next meaningful gains will likely come from improving answer generation, calibration, and evaluation rigor
-
-So the project is now in a good position to move from:
-
-> "Can we make a safety-aware surgical RAG-VQA pipeline work at all?"
-
-toward:
-
-> "How do we make it more reliable, more interpretable, and more clinically convincing?"
+`He thong da co day du khung ky thuat, da tao duoc artifact thuc va da chay duoc inference, nhung dang trong giai doan chuan hoa artifact va nang cap answer model/pipeline de co ket qua on dinh, sach va bao cao duoc theo chuan hoc thuat.`

@@ -3,14 +3,14 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-FRAMES_DIR = PROJECT_ROOT / "data" / "frames"
+FRAMES_DIR = PROJECT_ROOT / "data" / "frames_v3"
 ANNOTATIONS_DIR = PROJECT_ROOT / "data" / "annotations"
 
 BLUEPRINT_FILE = FRAMES_DIR / "question_blueprint.json"
 METADATA_FILE = FRAMES_DIR / "frame_metadata.json"
 
-QUESTIONS_OUT = ANNOTATIONS_DIR / "questions.json"
-RETRIEVAL_OUT = ANNOTATIONS_DIR / "retrieval_eval.json"
+QUESTIONS_OUT = ANNOTATIONS_DIR / "questions_v3.json"
+RETRIEVAL_OUT = ANNOTATIONS_DIR / "retrieval_eval_v3.json"
 
 
 QTYPE_TEMPLATE_BANK = {
@@ -114,23 +114,26 @@ def make_gold_answer_stub(item: dict) -> str:
     if item["should_defer"]:
         if qtype == "workflow_phase":
             return (
-                "DEFER - the visual evidence is not strong enough to assign the operative "
+                "DEFER — the visual evidence is not strong enough to assign the operative "
                 "phase safely; the frame should be interpreted cautiously and the system "
                 "should defer until anatomy or the operative step is clearer."
             )
         if qtype == "safety_verification":
             return (
-                "DEFER - safe continuation cannot be verified confidently from this single "
+                "DEFER — safe continuation cannot be verified confidently from this single "
                 "frame because the anatomy or dissection status is too uncertain to support "
                 "a reliable safety judgment."
             )
         if qtype == "risk_pitfall":
             return (
-                "DEFER - this frame suggests a potentially high-risk situation with "
+                "DEFER — this frame suggests a potentially high-risk situation with "
                 "ambiguous anatomy or limited visibility, so a conservative defer response "
                 "is safer than a definitive action recommendation."
             )
-        return "DEFER - the frame does not provide enough reliable visual information for a safe, frame-specific answer."
+        return (
+            "DEFER — the frame does not provide enough reliable visual information for a "
+            "safe, frame-specific answer."
+        )
 
     if qtype == "recognition":
         if "grasper" in classes:
@@ -144,7 +147,10 @@ def make_gold_answer_stub(item: dict) -> str:
                 "The frame most likely shows liver-side hepatobiliary anatomy with visible "
                 "vascular markings near the gallbladder dissection field."
             )
-        return "The frame most likely shows the liver or adjacent hepatobiliary tissue in a relatively clear laparoscopic view."
+        return (
+            "The frame most likely shows the liver or adjacent hepatobiliary tissue in a "
+            "relatively clear laparoscopic view."
+        )
 
     if qtype == "workflow_phase":
         if diff == "easy":
@@ -157,7 +163,10 @@ def make_gold_answer_stub(item: dict) -> str:
                 "This frame most likely represents active traction-assisted dissection in the "
                 "hepatobiliary field rather than clipping or specimen extraction."
             )
-        return "This frame most likely represents active operative dissection or exposure within the cholecystectomy workflow."
+        return (
+            "This frame most likely represents active operative dissection or exposure within "
+            "the cholecystectomy workflow."
+        )
 
     if qtype == "anatomy_landmark":
         if "hepatic_vein" in classes:
@@ -187,9 +196,13 @@ def make_gold_answer_stub(item: dict) -> str:
 
 
 def make_notes(item: dict, meta: dict) -> str:
-    top_scores = sorted(meta["question_type_scores"].items(), key=lambda kv: kv[1], reverse=True)[:3]
+    top_scores = sorted(
+        meta["question_type_scores"].items(),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )[:3]
     return (
-        "Draft scaffold for manual annotation. "
+        f"Draft scaffold for manual annotation. "
         f"Assigned={item['question_type']}|{item['difficulty']}; "
         f"should_defer={item['should_defer']}; "
         f"top3_qtypes={top_scores}; "
@@ -213,22 +226,10 @@ def make_retrieval_keywords(item: dict) -> list[str]:
         keywords.extend(["basic orientation", "clear view"])
 
     deduped = []
-    for keyword in keywords:
-        if keyword not in deduped:
-            deduped.append(keyword)
+    for kw in keywords:
+        if kw not in deduped:
+            deduped.append(kw)
     return deduped[:8]
-
-
-def expected_collections(qtype: str) -> list[str]:
-    if qtype == "recognition":
-        return ["visual_ontology", "biliary_anatomy_landmarks"]
-    if qtype == "workflow_phase":
-        return ["safe_chole_guideline", "biliary_anatomy_landmarks"]
-    if qtype == "anatomy_landmark":
-        return ["biliary_anatomy_landmarks", "visual_ontology"]
-    if qtype == "safety_verification":
-        return ["safe_chole_guideline", "complication_management"]
-    return ["complication_management", "safe_chole_guideline"]
 
 
 def build_outputs():
@@ -275,12 +276,30 @@ def build_outputs():
     return questions, retrieval
 
 
+def expected_collections(qtype: str) -> list[str]:
+    if qtype == "recognition":
+        return ["visual_ontology", "biliary_anatomy_landmarks"]
+    if qtype == "workflow_phase":
+        return ["safe_chole_guideline", "biliary_anatomy_landmarks"]
+    if qtype == "anatomy_landmark":
+        return ["biliary_anatomy_landmarks", "visual_ontology"]
+    if qtype == "safety_verification":
+        return ["safe_chole_guideline", "complication_management"]
+    return ["complication_management", "safe_chole_guideline"]
+
+
 def main():
     ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
     questions, retrieval = build_outputs()
 
-    QUESTIONS_OUT.write_text(json.dumps(questions, indent=2, ensure_ascii=False), encoding="utf-8")
-    RETRIEVAL_OUT.write_text(json.dumps(retrieval, indent=2, ensure_ascii=False), encoding="utf-8")
+    QUESTIONS_OUT.write_text(
+        json.dumps(questions, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    RETRIEVAL_OUT.write_text(
+        json.dumps(retrieval, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     print(f"[DONE] questions -> {QUESTIONS_OUT}")
     print(f"[DONE] retrieval -> {RETRIEVAL_OUT}")
