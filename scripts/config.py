@@ -209,7 +209,7 @@ VLM_PROVIDER     = os.environ.get(
 OPENAI_VLM_MODEL = os.environ.get("OPENAI_VLM_MODEL", "gpt-4o")
 LOCAL_VLM_MODEL  = os.environ.get(
     "LOCAL_VLM_MODEL",
-    "llava-hf/llava-1.5-7b-hf",
+    "Qwen/Qwen2.5-VL-7B-Instruct",
 )
 VLM_MODEL        = OPENAI_VLM_MODEL if VLM_PROVIDER == "openai" else LOCAL_VLM_MODEL
 VLM_MAX_TOKENS   = 400
