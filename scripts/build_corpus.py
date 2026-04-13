@@ -21,7 +21,7 @@ Retained features:
   - Built-in validation pass
 
 Usage:
-    python scripts/build_corpus_v3.py
+    python scripts/build_corpus.py
 """
 
 import json
@@ -43,6 +43,7 @@ from config import (
 )
 
 # ─── Output path: v3 separate from v2 (Fix #3) ─────────────────────
+# Active output path for the synced v3 corpus artifacts.
 CHUNKS_FILE = DOCS_CHUNKS_DIR / "chunks_v3.jsonl"
 
 

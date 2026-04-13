@@ -11,18 +11,18 @@ This repository implements a surgical RAG-VQA pipeline that combines:
 
 The current codebase is aligned with the final experiment setup:
 
-- frames: `data/frames/`
-- questions: `data/annotations/questions.json`
-- retrieval evaluation: `data/annotations/retrieval_eval.json`
-- retrieval corpus: `docs/chunks/chunks.jsonl`
-- main output: `results/spike_results.json`
+- frames: `data/frames_v3/`
+- questions: `data/annotations/questions_v3.json`
+- retrieval evaluation: `data/annotations/retrieval_eval_v3.json`
+- retrieval corpus: `docs/chunks/chunks_v3.jsonl`
+- main output: `results/spike_results_v3.json`
 
 ## Pipeline Overview
 
 The active workflow in this repository has four stages:
 
 1. Build a structured surgical retrieval corpus from guideline PDFs.
-2. Retrieve relevant evidence using `retrieval.py` over `chunks.jsonl`.
+2. Retrieve relevant evidence using `retrieval.py` over `chunks_v3.jsonl`.
 3. Run a local Hugging Face VLM on frame + retrieved evidence with a safety-aware prompt.
 4. Evaluate answer/defer behavior and save structured outputs.
 
@@ -42,7 +42,7 @@ The main scripts used by the current experiment are:
 
 The current retrieval stack is built around `retrieval.py` and includes:
 
-- child-first retrieval over `chunks.jsonl`
+- child-first retrieval over `chunks_v3.jsonl`
 - parent-expanded evidence packaging for prompt construction
 - field-aware BM25 over contextualized chunk fields
 - dense retrieval with sentence-transformer embeddings
@@ -62,7 +62,7 @@ The current VLM path in `scripts/rag_vqa_pipeline.py` supports:
 The recommended server configuration for the current project is `local_hf` with a GPU-backed Hugging Face model. The default local VLM in code is:
 
 ```env
-LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
+LOCAL_VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
 ```
 
 The prompt is explicitly safety-oriented and instructs the model to return `DEFER` when:
@@ -108,7 +108,7 @@ VLM_PROVIDER=local_hf
 HF_TOKEN=hf_your_read_token_here
 HF_CACHE_DIR=
 HF_LOCAL_FILES_ONLY=0
-LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
+LOCAL_VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
 LOCAL_VLM_MAX_NEW_TOKENS=256
 RETRIEVAL_MODE=hybrid
 DENSE_MODEL_NAME=BAAI/bge-large-en-v1.5
@@ -120,7 +120,7 @@ RERANK_TOP_N=20
 Optional alternative VLM if your server stack supports it cleanly:
 
 ```env
-LOCAL_VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
+LOCAL_VLM_MODEL=llava-hf/llava-1.5-7b-hf
 ```
 
 ## Prepare Models on Server
@@ -155,7 +155,7 @@ python scripts/rag_vqa_pipeline.py
 
 This writes the main structured output to:
 
-- `results/spike_results.json`
+- `results/spike_results_v3.json`
 
 ### 3. Evaluate results
 
@@ -175,8 +175,8 @@ This repository ignores generated data and artifacts such as:
 That means a server pull of code alone may not be sufficient if the required data or chunk files are not already present. In practice, the server must have:
 
 - the `frames` images
-- the `questions` and `retrieval_eval` annotation files
-- the source PDFs in `docs/raw/` or a prebuilt `chunks.jsonl`
+- the `questions_v3` and `retrieval_eval_v3` annotation files
+- the source PDFs in `docs/raw/` or a prebuilt `chunks_v3.jsonl`
 
 ## Security and Operational Notes
 

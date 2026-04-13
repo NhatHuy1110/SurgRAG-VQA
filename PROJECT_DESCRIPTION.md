@@ -113,7 +113,7 @@ Du lieu nay la nguon dau vao cho `frames_selection.py`.
 
 #### `data/frames/`
 
-Day la bo frame da duoc chon cua mot phien ban cu hon, hien dang co:
+Day la bo frame da duoc chon cua mot phien ban cu hon, hien dang duoc giu lai lam `legacy snapshot`:
 
 - `100` anh frame
 - `100` mask tuong ung
@@ -126,21 +126,29 @@ No cho thay mot pipeline selection/annotation da tung duoc chay va co artifact t
 
 #### `data/frames_v3/`
 
-Thu muc nay la dich den ma code `v3` hien tai dang ky vong de su dung, nhung tren local hien tai chua co artifact day du.
+Thu muc nay la bo artifact active ma code hien tai dang su dung.
+
+Tren local, `data/frames_v3/` da duoc dong bo voi bo `data/frames/` de:
+
+- giu naming convention nhat quan voi `config.py`,
+- khop voi output path cua `frames_selection.py`,
+- va tranh tinh trang code mong cho artifact `v3` trong khi local chi co bo legacy.
 
 #### `data/annotations/`
 
-Tren local hien dang co:
+Tren local hien dang co ca 2 cap file:
 
 - `questions.json`
 - `retrieval_eval.json`
-
-Trong khi code `v3` hien tai dang ky vong:
-
 - `questions_v3.json`
 - `retrieval_eval_v3.json`
 
-Dieu nay cho thay code va artifact hien tai chua dong bo hoan toan theo mot naming convention duy nhat.
+Trong do:
+
+- bo `*.json` la ban legacy,
+- bo `*_v3.json` la ban active ma pipeline hien tai doc tu `config.py`.
+
+Hai cap file hien dang duoc dong bo cung noi dung de giu backward reference ma van de code chay theo naming convention `v3`.
 
 ### 4.3. Knowledge assets hien dang ton tai
 
@@ -167,13 +175,14 @@ Day la tap tai lieu da duoc chon de bao phu:
 
 #### `docs/chunks/`
 
-Tren local hien co:
+Tren local hien co ca:
 
 - `chunks.jsonl`
+- `chunks_v3.jsonl`
 
-So luong chunk thuc te hien co trong file nay la `1713`.
+So luong chunk thuc te hien co trong corpus active la `1713`.
 
-Moi dong trong `chunks.jsonl` la mot JSON chunk, co cac truong tieu bieu:
+Moi dong trong `chunks_v3.jsonl` la mot JSON chunk, co cac truong tieu bieu:
 
 - `chunk_id`
 - `doc_id`
@@ -198,7 +207,7 @@ Moi dong trong `chunks.jsonl` la mot JSON chunk, co cac truong tieu bieu:
 - `contextualized_text`
 - `child_ids`
 
-Code `v3` hien tai dang huong toi `chunks_v3.jsonl`, nhung artifact local van dang la `chunks.jsonl`.
+`chunks.jsonl` duoc giu lai nhu ban legacy, con `chunks_v3.jsonl` la file active ma retrieval hien tai su dung.
 
 ### 4.4. Ket qua inference hien dang ton tai
 
@@ -211,20 +220,18 @@ Day la artifact ket qua inference gan nhat hien co tren local.
 Thong ke nhanh tren file nay:
 
 - Tong so sample: `100`
-- So sample he thong du doan `defer`: `0`
+- So sample he thong tra loi truc tiep: `70`
+- So sample he thong du doan `defer`: `30`
 - Phan bo confidence:
-  - `high`: 12
-  - `medium`: 2
-  - `low`: 2
-  - `unknown`: 84
-- So response rong (`raw_response` empty): `30`
+  - `high`: 70
+  - `unknown`: 30
 - So chunk retrieval trung binh moi cau hoi: `4.72`
 
 Thong ke nay rat quan trong vi no cho thay:
 
 - pipeline da chay va sinh duoc ket qua,
-- nhung quality cua output VLM trong dot inference do con rat yeu,
-- dac biet o kha nang follow format va defer.
+- he thong da co kha nang `defer` o artifact active hien tai,
+- nhung chat luong clinical correctness va grounding van can duoc kiem tra can than qua evaluation.
 
 ## 5. Cac script chinh va vai tro cua tung script
 
@@ -256,7 +263,7 @@ Ve model:
 - Dense retrieval model mac dinh: `sentence-transformers/all-MiniLM-L6-v2`
 - Reranker mac dinh: `BAAI/bge-reranker-large`
 - OpenAI VLM mac dinh: `gpt-4o`
-- Local VLM mac dinh: `llava-hf/llava-1.5-7b-hf`
+- Local VLM mac dinh: `Qwen/Qwen2.5-VL-7B-Instruct`
 - Judge model mac dinh: `Qwen/Qwen2.5-VL-7B-Instruct`
 
 Y nghia:
@@ -353,12 +360,12 @@ Y nghia:
 - Script nay la cau noi giua `frame benchmark` va `RAG-VQA inference`.
 - Day la noi ma benchmark duoc `dong goi` thanh bo cau hoi co the chay pipeline.
 
-Local hien dang co bo cu:
+Tren local hien dang co dong thoi:
 
-- `questions.json`
-- `retrieval_eval.json`
+- `questions.json` / `retrieval_eval.json` (legacy)
+- `questions_v3.json` / `retrieval_eval_v3.json` (active)
 
-Trong khi script hien tai se tao bo moi:
+Script hien tai se tao va overwrite bo active:
 
 - `questions_v3.json`
 - `retrieval_eval_v3.json`
@@ -409,9 +416,10 @@ Artifact dich den theo code hien tai:
 
 - `docs/chunks/chunks_v3.jsonl`
 
-Artifact local hien co:
+Tren local hien dang giu ca:
 
-- `docs/chunks/chunks.jsonl`
+- `docs/chunks/chunks.jsonl` (legacy)
+- `docs/chunks/chunks_v3.jsonl` (active)
 
 ### 5.5. `scripts/retrieval.py`
 
@@ -598,16 +606,22 @@ De hieu du an, can xem toan bo he thong nhu mot chuoi bien doi artifact.
 
 ### 6.2. Artifact annotation
 
-- `questions.json` hoac `questions_v3.json`
-  File dau vao cho pipeline inference.
+- `questions_v3.json`
+  File dau vao active cho pipeline inference.
 
-- `retrieval_eval.json` hoac `retrieval_eval_v3.json`
-  File phuc vu danh gia retrieval.
+- `retrieval_eval_v3.json`
+  File active phuc vu danh gia retrieval.
+
+- `questions.json` va `retrieval_eval.json`
+  Ban legacy duoc giu lai de doi chieu.
 
 ### 6.3. Artifact knowledge base
 
-- `chunks.jsonl` hoac `chunks_v3.jsonl`
-  Corpus retrieval da duoc cat chunk va gan metadata.
+- `chunks_v3.jsonl`
+  Corpus retrieval active da duoc cat chunk va gan metadata.
+
+- `chunks.jsonl`
+  Ban legacy duoc giu lai de backward reference.
 
 ### 6.4. Artifact inference
 
@@ -667,17 +681,17 @@ Chung ta da co:
 
 ### 7.2. Trang thai artifact hien tai
 
-Ve mat artifact, local hien dang o trang thai `co du rat nhieu thanh phan da build, nhung chua dong bo naming hoan toan giua code v3 va artifact cu`.
+Ve mat artifact, local hien dang o trang thai `da dong bo naming convention v3 cho code chay truc tiep, dong thoi van giu lai bo legacy de doi chieu`.
 
 Cu the:
 
-- Code hien tai mong cho:
+- Code hien tai doc bo active:
   - `data/frames_v3`
   - `questions_v3.json`
   - `retrieval_eval_v3.json`
   - `chunks_v3.jsonl`
 
-- Artifact local hien dang co:
+- Bo legacy van duoc giu lai:
   - `data/frames`
   - `questions.json`
   - `retrieval_eval.json`
@@ -685,8 +699,8 @@ Cu the:
 
 Dieu nay co nghia la:
 
-- ve mat kien truc, pipeline da ro rang,
-- ve mat artifact, local van dang o giai doan giao thoa giua `bo cu` va `code v3`.
+- ve mat kien truc, pipeline da ro rang va dong bo voi `config.py`,
+- ve mat du lieu, local co ca active set va legacy set de phuc vu doi chieu.
 
 ### 7.3. Van de da duoc phat hien tu ket qua inference truoc do
 
@@ -785,11 +799,11 @@ Trong boi canh phau thuat, day la mot huong rat hop ly va co gia tri nghien cuu.
 
 De report trung thuc, day la nhung han che chinh:
 
-1. Artifact local va naming convention `v3` chua dong bo hoan toan.
-2. Dot inference cu bang `LLaVA-1.5-7B` cho output quality thap.
-3. Khau answer generation hien van phu thuoc rat manh vao chat luong model VLM.
-4. Gold answers trong annotation van mang tinh scaffold, chua phai final expert-validated references.
-5. Mot so artifact `v3` chua duoc tai tao day du tren local moi.
+1. Bo `*_v3` hien da dong bo cho code chay, nhung van dang la ban sao tu legacy artifact thay vi artifact duoc tai tao lai tu dau.
+2. Khau answer generation hien van phu thuoc rat manh vao chat luong model VLM.
+3. Gold answers trong annotation van mang tinh scaffold, chua phai final expert-validated references.
+4. Retrieval corpus active da su dung duoc, nhung van can duoc lam sach va mo rong them tai lieu textbook/atlas neu muon di xa hon ve research.
+5. He thong `defer` hien tai da co ve mat pipeline, nhung phan `calibration` va `conformal prediction` van la buoc ke tiep chua duoc implementation rieng.
 
 ## 11. Neu can giai thich ngan gon cho professor
 

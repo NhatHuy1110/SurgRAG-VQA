@@ -134,7 +134,7 @@ DEFAULT_CHUNK_SIZE    = 800
 DEFAULT_CHUNK_OVERLAP = 100
 MIN_CHUNK_LENGTH      = 80
 
-# Token-based chunking (replaces char-based defaults for v3)
+# Token-based chunking defaults for the active corpus build
 CHILD_CHUNK_TOKENS   = 250    # child: precise retrieval unit
 PARENT_CHUNK_TOKENS  = 800    # parent: broader context for evidence packaging
 CHILD_OVERLAP_TOKENS = 30

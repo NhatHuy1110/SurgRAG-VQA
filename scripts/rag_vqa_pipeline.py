@@ -5,7 +5,7 @@ Usage:
     export VLM_PROVIDER="local_hf"
     python scripts/rag_vqa_pipeline.py
 
-Runs questions_v3.json against frames + retrieval_v3,
+Runs the active v3 annotation set against frames + retrieval,
 and saves structured results to results/spike_results_v3.json.
 """
 

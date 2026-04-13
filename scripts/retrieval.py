@@ -1,5 +1,5 @@
 """
-retrieval_v3.py - Retrieval v3 for SurgRAG-VQA.
+retrieval.py - Hybrid retrieval engine for SurgRAG-VQA.
 
 Core changes over v2:
   - defaults to chunks_v3.jsonl
