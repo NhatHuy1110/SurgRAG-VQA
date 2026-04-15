@@ -1,17 +1,12 @@
 """
-build_corpus_v3.py — Enhanced corpus builder for SurgRAG-VQA.
+build_corpus.py — Corpus builder for SurgRAG-VQA.
 
-Fixes over previous version:
-  P1-1. Heading detection tightened — removed over-broad title-case pattern,
-        added negative filters for author/affiliation/institution lines
-  P1-2. Parent-child linking by sentence-span overlap, not equal distribution
-  P1-3. Output writes to chunks_v3.jsonl (separate from v2)
-  P1-4. Tag extraction uses word-boundary matching; dangerous short aliases
-        (wash, port, clip, cut) removed or guarded with phrase context
-  P2-5. Front matter cleaning: author blocks, affiliations, emails, URLs-in-text
-  P2-6. Mojibake normalization (UTF-8 double-encoding artifacts)
-
-Retained features:
+Some features I've been built into this file:
+  - Heading detection tightened — removed over-broad title-case pattern, added negative filters for author/affiliation/institution lines
+  - Parent-child linking by sentence-span overlap, not equal distribution
+  - Tag extraction uses word-boundary matching; dangerous short aliases (wash, port, clip, cut) removed or guarded with phrase context
+  - Front matter cleaning: author blocks, affiliations, emails, URLs-in-text
+  - Mojibake normalization (UTF-8 double-encoding artifacts)
   - Token-based chunking (tiktoken)
   - Parent-child hierarchy with parent_id / child_ids / sibling_ids
   - Page-level provenance (page_start, page_end, heading_path, section_id)
@@ -32,8 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (
+    CHUNKS_FILE,
     DOCS_RAW_DIR,
-    DOCS_CHUNKS_DIR,
     RAG_DOCUMENTS,
     MIN_CHUNK_LENGTH,
     JUNK_PATTERNS,
@@ -41,11 +36,6 @@ from config import (
     DENSE_MODEL_NAME,
     HF_CACHE_DIR,
 )
-
-# ─── Output path: v3 separate from v2 (Fix #3) ─────────────────────
-# Active output path for the synced v3 corpus artifacts.
-CHUNKS_FILE = DOCS_CHUNKS_DIR / "chunks_v3.jsonl"
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  TOKENIZER
@@ -99,7 +89,7 @@ if _tokenizer_max_len:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  MOJIBAKE NORMALIZATION  (Fix #6)
+#  MOJIBAKE NORMALIZATION
 # ═══════════════════════════════════════════════════════════════════════
 
 _MOJIBAKE_MAP = {
@@ -122,14 +112,11 @@ _MOJIBAKE_SUSPECTS = (
     "\u00e2\x80", "\u00e2\u20ac", "\u00c3", "\u00c2",
 )
 
-
 def _mojibake_score(text: str) -> int:
     return sum(text.count(s) for s in _MOJIBAKE_SUSPECTS)
 
-
 def _contains_mojibake(text: str) -> bool:
     return _mojibake_score(text or "") > 0
-
 
 def normalize_mojibake(text: str) -> str:
     text = unicodedata.normalize("NFC", text or "")
@@ -163,6 +150,17 @@ def normalize_mojibake(text: str) -> str:
 
     return text
 
+def normalize_pdf_artifacts(text: str) -> str:
+    text = (text or "").replace("\ufb01", "fi").replace("\ufb02", "fl")
+    text = text.replace("\u200b", "").replace("\u00ad", "")
+    text = re.sub(r"/C\d{1,3}", " ", text)
+    text = re.sub(r"([A-Za-z])\s*/C\d{1,3}([A-Za-z])", r"\1 \2", text)
+    text = re.sub(r"h\s*t\s*t\s*p\s*s?\s*:\s*/\s*/", "https://", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bVol\.\s*:\s*\(\d+\)\s*1\s*3\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bPage\s+\d+\s+of\s+\d+\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"([A-Z])\s*\?\s*s", r"\1's", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text
 
 # ═══════════════════════════════════════════════════════════════════════
 #  PDF EXTRACTION  (page-level)
@@ -213,9 +211,8 @@ def extract_pages(file_path: Path) -> list[dict]:
         p["text"] = normalize_mojibake(p["text"])
     return pages
 
-
 # ═══════════════════════════════════════════════════════════════════════
-#  TEXT CLEANING  (Fix #5: front matter removal)
+#  TEXT CLEANING 
 # ═══════════════════════════════════════════════════════════════════════
 
 _junk_re = [re.compile(p, re.MULTILINE | re.IGNORECASE) for p in JUNK_PATTERNS]
@@ -281,7 +278,6 @@ def _remove_front_matter(text: str) -> str:
         text = pat.sub("", text)
     return text
 
-
 def _looks_like_reference_entry(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
@@ -335,7 +331,6 @@ def _looks_like_reference_entry(line: str) -> bool:
         return True
     return False
 
-
 def _looks_like_toc_line(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
@@ -347,14 +342,12 @@ def _looks_like_toc_line(line: str) -> bool:
             return True
     return False
 
-
 def _is_reference_heavy_text(text: str) -> bool:
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     if len(lines) < 5:
         return False
     ref_hits = sum(1 for l in lines[: min(12, len(lines))] if _looks_like_reference_entry(l))
     return ref_hits >= 4
-
 
 def _is_reference_heavy_lines(lines: list[str]) -> bool:
     stripped = [line.strip() for line in lines if line.strip()]
@@ -368,7 +361,6 @@ def _is_reference_heavy_lines(lines: list[str]) -> bool:
         or (numbered_hits >= 8 and ref_hits >= max(5, numbered_hits - 2))
     )
 
-
 def _is_toc_heavy_page(lines: list[str]) -> bool:
     stripped = [line.strip() for line in lines if line.strip()]
     if len(stripped) < 6:
@@ -377,7 +369,6 @@ def _is_toc_heavy_page(lines: list[str]) -> bool:
     toc_hits = sum(1 for line in sample if _looks_like_toc_line(line))
     page_tail_hits = sum(1 for line in sample if re.search(r"\s\d{1,3}\s*$", line))
     return toc_hits >= 5 or (toc_hits >= 3 and page_tail_hits >= 8)
-
 
 def _is_front_matter_page(lines: list[str]) -> bool:
     stripped = [line.strip() for line in lines if line.strip()]
@@ -402,7 +393,6 @@ def _is_front_matter_page(lines: list[str]) -> bool:
     )
     return signals >= 2 or (signals >= 1 and short_title_lines >= 2 and len(sample) <= 30)
 
-
 def _looks_like_front_matter_line(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
@@ -419,14 +409,12 @@ def _looks_like_front_matter_line(line: str) -> bool:
         return True
     return False
 
-
 def _looks_like_body_line(line: str) -> bool:
     stripped = line.strip()
     if not stripped or _looks_like_front_matter_line(stripped):
         return False
     words = re.findall(r"[A-Za-z][A-Za-z\-']+", stripped)
     return len(words) >= 8
-
 
 def _trim_leading_front_matter(text: str) -> str:
     lines = text.split("\n")
@@ -456,7 +444,6 @@ def _trim_leading_front_matter(text: str) -> str:
 
     trimmed = "\n".join(lines[start_idx:]).strip()
     return trimmed or text
-
 
 def _trim_section_preamble(text: str) -> str:
     head = text[:4000]
@@ -519,6 +506,7 @@ def _truncate_at_references(text: str) -> str:
 def clean_text(text: str) -> str:
     text = text.replace("\x0c", "\n").replace("\x00", "")
     text = normalize_mojibake(text)
+    text = normalize_pdf_artifacts(text)
     text = _remove_junk_lines(text)
     text = _remove_front_matter(text)
     text = _trim_leading_front_matter(text)
@@ -527,12 +515,11 @@ def clean_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     return text.strip()
 
-
 # ═══════════════════════════════════════════════════════════════════════
-#  HEADING DETECTION  (Fix #1: tightened)
+#  HEADING DETECTION 
 # ═══════════════════════════════════════════════════════════════════════
 
-HEADING_PATTERNS_V3 = [
+HEADING_PATTERNS = [
     r"^(?:Question|Step|Recommendation|Key\s+Question)\s*\d+",
     r"^(?:Section\s+[IVXLC]+|Objective\s+\d+|Appendix\s+[A-Z])\b",
     r"^(?:Introduction|Background|Methods?|Results?|Discussion|Conclusions?|Summary|Recommendations?)\b",
@@ -540,7 +527,7 @@ HEADING_PATTERNS_V3 = [
     r"^\d{1,2}(?:\.\d{1,2}){0,2}\.?\s+[A-Z]",
     r"^[A-Z][A-Z\s\-]{4,}$",
 ]
-_heading_re_v3 = [re.compile(p, re.MULTILINE) for p in HEADING_PATTERNS_V3]
+_heading_re = [re.compile(p, re.MULTILINE) for p in HEADING_PATTERNS]
 
 _HEADING_REJECT = [
     re.compile(r"(?:MD|PhD|DO|FACS|FRCS|MPH|RN|MBA|DrPH|MMedSc|MPhil)", re.IGNORECASE),
@@ -559,12 +546,11 @@ def _is_heading(line: str) -> bool:
         return False
     if re.match(r"^\d+(?:\.\d+){0,2}\.?\s+(?:In|On|At|The|A|An|This|These)\b", stripped):
         return False
-    if not any(p.match(stripped) for p in _heading_re_v3):
+    if not any(p.match(stripped) for p in _heading_re):
         return False
     if any(p.search(stripped) for p in _HEADING_REJECT):
         return False
     return True
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  SECTION DETECTION
@@ -579,6 +565,26 @@ def _update_heading_stack(stack: list[str], heading: str) -> list[str]:
         return []
     return stack[:2]
 
+_SECTION_TITLE_DROP = [
+    re.compile(r"^\s*(?:THIEME|GUIDELINE|FEATURE|NA NA|BMI BMI|SECONDS FROM)\s*$", re.IGNORECASE),
+    re.compile(r"^\s*\d+\s+[A-Z][A-Za-z]+(?:et al\.?|[A-Za-z])+\d{4}\s*$", re.IGNORECASE),
+    re.compile(r"^\s*\d+\s+Points?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*\d+\.\s*[A-Z][^a-z]{0,3}\s*$"),
+    re.compile(r"^\s*\d+\s*J\b.*\d{4}.*$", re.IGNORECASE),
+]
+
+def _canonicalize_heading(heading: str) -> str:
+    heading = normalize_pdf_artifacts(normalize_mojibake((heading or "").strip()))
+    if not heading:
+        return ""
+    if re.fullmatch(r"(?:[A-Z]\s+){4,}[A-Z]", heading):
+        compact = heading.replace(" ", "")
+        if compact.upper() == "ABSTRACT":
+            return "ABSTRACT"
+        return compact.title()
+    heading = re.sub(r"\s{2,}", " ", heading)
+    heading = re.sub(r"^[\W_]+|[\W_]+$", "", heading)
+    return heading[:160].strip()
 
 def _append_section(
     sections: list[dict],
@@ -590,9 +596,14 @@ def _append_section(
     sec_counter: int,
     content_chars: int,
 ) -> tuple[int, int]:
+    title = _canonicalize_heading(title)
     body = _trim_section_preamble("\n".join(lines).strip())
     if len(body) <= MIN_CHUNK_LENGTH:
         return sec_counter, content_chars
+    if not title or any(p.match(title) for p in _SECTION_TITLE_DROP):
+        if len(body) < 240:
+            return sec_counter, content_chars
+        title = "Section"
     if _looks_like_reference_entry(title) or _is_reference_heavy_text(body):
         return sec_counter, content_chars
 
@@ -702,6 +713,241 @@ def detect_sections_with_pages(pages: list[dict]) -> list[dict]:
     ]
     return sections
 
+DATASET_KEEP_TITLE_PATTERNS = [
+    re.compile(r"\babstract\b", re.IGNORECASE),
+    re.compile(r"\bintroduction\b", re.IGNORECASE),
+    re.compile(r"\bbackground\b", re.IGNORECASE),
+    re.compile(r"\bcontext\b", re.IGNORECASE),
+    re.compile(r"\bdataset\b", re.IGNORECASE),
+    re.compile(r"\bannotation\b", re.IGNORECASE),
+    re.compile(r"\bbenchmark\b", re.IGNORECASE),
+    re.compile(r"\bcvs\b", re.IGNORECASE),
+    re.compile(r"\bcritical view of safety\b", re.IGNORECASE),
+    re.compile(r"\bdiscussion\b", re.IGNORECASE),
+    re.compile(r"\bconclusion\b", re.IGNORECASE),
+]
+
+DROP_TITLE_PATTERNS = [
+    re.compile(r"\brelated work\b", re.IGNORECASE),
+    re.compile(r"\backnowledg", re.IGNORECASE),
+    re.compile(r"\bappendix\b", re.IGNORECASE),
+    re.compile(r"\bethic", re.IGNORECASE),
+    re.compile(r"\bconflict", re.IGNORECASE),
+    re.compile(r"\bfunding\b", re.IGNORECASE),
+    re.compile(r"\bavailability of data\b", re.IGNORECASE),
+    re.compile(r"\bauthor", re.IGNORECASE),
+    re.compile(r"\bbiomedical challenges\b", re.IGNORECASE),
+]
+
+LOW_VALUE_TEXT_PATTERNS = [
+    re.compile(r"\ball rights reserved\b", re.IGNORECASE),
+    re.compile(r"\bcreativecommons\b", re.IGNORECASE),
+    re.compile(r"\bcorrespondence to\b", re.IGNORECASE),
+    re.compile(r"\bpublished online\b", re.IGNORECASE),
+    re.compile(r"\bdoi:\b", re.IGNORECASE),
+]
+
+def _looks_like_table_block(text: str) -> bool:
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if len(lines) < 3:
+        return False
+    numericish = sum(
+        1 for line in lines[:12]
+        if re.search(r"\b\d+(?:\.\d+)?\b", line) and len(re.findall(r"[A-Za-z]+", line)) <= 6
+    )
+    return numericish >= max(4, len(lines[:12]) // 2)
+
+
+def _looks_like_study_table(text: str) -> bool:
+    sample = text[:4000]
+    na_hits = len(re.findall(r"\bNA\b", sample))
+    year_hits = len(re.findall(r"\b20\d{2}\b", sample))
+    bracket_hits = len(re.findall(r"\(\d+\)", sample))
+    table_hits = len(re.findall(r"\bTable\s+\d+\b", sample, re.IGNORECASE))
+    return (na_hits >= 4 and year_hits >= 3 and bracket_hits >= 2) or (table_hits >= 1 and na_hits >= 3 and year_hits >= 2)
+
+
+def _looks_like_author_block(text: str) -> bool:
+    sample = text[:1600]
+    aff_hits = len(re.findall(r"\b(?:university|hospital|institute|medical school|department of|france|germany|usa|italy|china|canada)\b", sample, re.IGNORECASE))
+    comma_hits = sample.count(",")
+    lineish_hits = sample.count("\n")
+    return aff_hits >= 4 and comma_hits >= 12 and lineish_hits >= 6
+
+def _sanitize_section_text(text: str) -> str:
+    text = normalize_pdf_artifacts(text)
+    text = re.sub(r"\b(?:Open Access|REVIEW)\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(?:Received|Accepted|Published online)\s*:[^\n]+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bAddress for correspondence\b.*?(?=(?:Abstract|Introduction|Background|Objective|Methods?|Results?|Discussion|Conclusions?|We sought))", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"\bCorrespondence to\b.*?(?=(?:Abstract|Introduction|Background|Objective|Methods?|Results?|Discussion|Conclusions?|We sought))", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"\bSee the Terms and Conditions\b.*$", "", text, flags=re.IGNORECASE | re.DOTALL)
+    head = text[:5000]
+    metadata_prefix = re.search(
+        r"(?:address for correspondence|correspondence to|department of|hospital|university|received|accepted|published online|open access)",
+        head[:2000],
+        re.IGNORECASE,
+    )
+    if metadata_prefix:
+        for tok in ["abstract", "introduction", "background", "method", "result", "discussion", "conclusion", "objective", "we sought"]:
+            pos = head.lower().find(tok)
+            if 80 <= pos <= 4500:
+                candidate = text[pos:].strip()
+                if len(candidate) >= 220 and candidate[:1].isupper():
+                    text = candidate
+                    break
+    text = re.sub(r"\b(?:Author contribution|Declaration of competing interest|Acknowledg?ments?|Funding|Provenance and peer review|Consent|Sources of funding for your research|Ethical approval|Registration of research studies)\b.*$", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"\bReferences\b.*$", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _trim_dataset_frontmatter(text: str) -> str:
+    head = text[:6000]
+    for tok in [r"\bA\s*B\s*S\s*T\s*R\s*A\s*C\s*T\b", r"\bAbstract\b", r"\b1\.\s*Introduction\b", r"\bIntroduction\b"]:
+        m = re.search(tok, head, re.IGNORECASE)
+        if m and m.start() >= 180:
+            candidate = text[m.start():].strip()
+            if len(candidate) >= 220:
+                return candidate
+    return text
+
+def _section_signal_score(section: dict, doc_config: dict) -> int:
+    title = (section.get("title") or "").lower()
+    text = (section.get("text") or "").lower()
+    score = 0
+    for hint in doc_config.get("tags_hint", []):
+        hint = hint.lower()
+        if hint in title:
+            score += 2
+        elif hint in text:
+            score += 1
+    return score
+
+
+def _infer_section_title(text: str, fallback: str) -> str:
+    text = normalize_pdf_artifacts(text or "")
+    start = text[:800].strip()
+    if not start:
+        return fallback
+
+    m = re.match(r"^\s*\d+(?:\.\d+)*\.\s*([A-Z][A-Za-z][^\n]{3,120})", start)
+    if m:
+        return m.group(1).strip(" -:;,.")
+
+    for label in [
+        "Abstract", "Background", "Introduction", "Methods", "Results",
+        "Discussion", "Conclusion", "Conclusions", "Summary",
+    ]:
+        if re.match(rf"^\b{label}\b[:\s-]", start, re.IGNORECASE):
+            return "Conclusions" if label == "Conclusion" else label
+
+    first_line = start.split("\n", 1)[0].strip()
+    first_line = re.sub(r"\[[^\]]+\]", " ", first_line)
+    first_line = re.sub(r"\s+", " ", first_line).strip(" -:;,.")
+    if len(first_line) > 20:
+        words = first_line.split()
+        return " ".join(words[:12]).strip(" -:;,.")
+
+    first_sentence = re.split(r"(?<=[.!?])\s+", start, maxsplit=1)[0]
+    first_sentence = re.sub(r"\[[^\]]+\]", " ", first_sentence)
+    first_sentence = re.sub(r"\s+", " ", first_sentence).strip(" -:;,.")
+    words = first_sentence.split()
+    if len(words) >= 4:
+        return " ".join(words[:12]).strip(" -:;,.")
+    return fallback
+
+def _should_keep_section(section: dict, doc_config: dict) -> bool:
+    title = (section.get("title") or "").strip()
+    text = (section.get("text") or "").strip()
+    family = doc_config.get("doc_family", "")
+    source_type = doc_config.get("source_type", "")
+
+    if len(text) < MIN_CHUNK_LENGTH:
+        return False
+    if any(p.search(title) for p in DROP_TITLE_PATTERNS):
+        return False
+    if any(p.search(text) for p in LOW_VALUE_TEXT_PATTERNS) and len(text) < 400:
+        return False
+    signal_score = _section_signal_score(section, doc_config)
+    if _looks_like_table_block(text) and signal_score < 3:
+        return False
+    if _looks_like_study_table(text):
+        return False
+
+    if family == "dataset_paper":
+        if _looks_like_author_block(text):
+            return False
+        keep = any(p.search(title) for p in DATASET_KEEP_TITLE_PATTERNS)
+        if keep:
+            return True
+        if "critical view of safety" in text.lower() or "annotation" in text.lower():
+            return True
+        return signal_score >= 2 and len(text) >= 220
+
+    if family == "human_factors":
+        if re.search(r"\b(?:introduction|methods?|results?|discussion|conclusions?|summary)\b", title, re.IGNORECASE):
+            return True
+        if re.search(r"\b(?:illusion|misidentification|misperception|human factors?|error|prevention|rule)\b", text, re.IGNORECASE):
+            return True
+        return signal_score >= 2
+
+    if source_type in {"guideline", "complication_guideline"}:
+        if re.search(r"\b(?:recommendation|summary of evidence|background|question|step|conclusion)\b", title, re.IGNORECASE):
+            return True
+        if re.search(r"\b(?:recommend|we suggest|we recommend|safe steps?|bailout|critical view of safety)\b", text, re.IGNORECASE):
+            return True
+        return signal_score >= 2
+
+    if source_type in {"anatomy_review", "clinical_review", "bailout_review"}:
+        if re.search(r"\b(?:introduction|discussion|conclusion|results|methods?|case presentation)\b", title, re.IGNORECASE):
+            return True
+        return signal_score >= 1
+
+    return True
+
+def filter_sections_for_document(sections: list[dict], doc_config: dict) -> list[dict]:
+    if doc_config.get("doc_id") == "ROUVIERE":
+        for section in sections:
+            full_text = _sanitize_section_text(section.get("text", ""))
+            m = re.search(r"\b(?:Abstract|Introduction)\b", full_text, re.IGNORECASE)
+            if m:
+                curated = full_text[m.start():]
+                curated = re.sub(r"\b2\.1\.\s*Registration\b.*", "", curated, flags=re.IGNORECASE | re.DOTALL)
+                curated = curated.strip()
+                if len(curated) >= 300:
+                    sections = [{
+                        **section,
+                        "title": "Rouviere Sulcus Landmark",
+                        "text": curated,
+                        "heading_path": "Rouviere Sulcus Landmark",
+                    }]
+                    break
+
+    filtered = []
+    sec_counter = 0
+    for section in sections:
+        text = _sanitize_section_text(section.get("text", ""))
+        if doc_config.get("doc_family") == "dataset_paper":
+            text = _trim_dataset_frontmatter(text)
+        title = _canonicalize_heading(section.get("title", ""))
+        if not title or title == "Section" or (
+            title == "Introduction"
+            and not re.match(r"^(?:Introduction|Background|Abstract)\b", text, re.IGNORECASE)
+        ):
+            title = _infer_section_title(text, title or "Section")
+        normalized = {
+            **section,
+            "title": title or "Section",
+            "text": text,
+            "heading_path": _canonicalize_heading(section.get("heading_path", "")) or title or "Section",
+        }
+        if not _should_keep_section(normalized, doc_config):
+            continue
+        sec_counter += 1
+        normalized["section_id"] = f"SEC_{sec_counter:03d}"
+        filtered.append(normalized)
+    return filtered
 
 # ═══════════════════════════════════════════════════════════════════════
 #  SENTENCE SPLITTING
@@ -727,9 +973,8 @@ def sentence_split(text: str) -> list[str]:
                 sentences.append(restored)
     return sentences
 
-
 # ═══════════════════════════════════════════════════════════════════════
-#  TAG EXTRACTION  (Fix #4: word-boundary matching)
+#  TAG EXTRACTION 
 # ═══════════════════════════════════════════════════════════════════════
 
 def _wb(phrase: str) -> re.Pattern:
@@ -833,7 +1078,6 @@ PHASE_KEYWORDS = {
 _PHASE_PAT = {ph: [_wb(kw) for kw in kws]
               for ph, kws in PHASE_KEYWORDS.items()}
 
-
 def _match_kw_alias(text: str, kw_pats: dict, alias_pats: dict) -> list[str]:
     found = set()
     for kw, pat in kw_pats.items():
@@ -844,7 +1088,6 @@ def _match_kw_alias(text: str, kw_pats: dict, alias_pats: dict) -> list[str]:
             found.add(canon)
     return sorted(found)
 
-
 def extract_tags(text: str) -> dict:
     return {
         "anatomy_tags":    _match_kw_alias(text, _ANAT_PAT, _ANAT_ALIAS),
@@ -854,7 +1097,6 @@ def extract_tags(text: str) -> dict:
         "phase_scope":     [ph for ph, pats in _PHASE_PAT.items()
                             if any(p.search(text) for p in pats)],
     }
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  TOKEN-AWARE PACKING
@@ -877,7 +1119,6 @@ def _split_overlong_text(text: str, max_tokens: int) -> list[str]:
     if current:
         pieces.append(" ".join(current))
     return pieces
-
 
 def _pack_sentences_tokens(sentences: list[str], max_tokens: int,
                            overlap_tokens: int) -> list[str]:
@@ -909,15 +1150,13 @@ def _pack_sentences_tokens(sentences: list[str], max_tokens: int,
         chunks.append(" ".join(current))
     return chunks
 
-
 # ═══════════════════════════════════════════════════════════════════════
-#  CHUNKING  (Fix #2: span-based parent-child)
+#  CHUNKING 
 # ═══════════════════════════════════════════════════════════════════════
 
 def _section_meta(section: dict) -> dict:
     return {k: section.get(k) for k in
             ("page_start", "page_end", "heading_path", "section_id")}
-
 
 def _build_parent_child_for_section(section: dict) -> list[dict]:
     """Build parent + child chunks with sentence-overlap-based linking."""
@@ -980,13 +1219,11 @@ def _build_parent_child_for_section(section: dict) -> list[dict]:
 
     return parents + children
 
-
 def chunk_section_aware(sections: list[dict], **_kw) -> list[dict]:
     all_chunks = []
     for sec in sections:
         all_chunks.extend(_build_parent_child_for_section(sec))
     return all_chunks
-
 
 def chunk_paragraph(sections: list[dict], **_kw) -> list[dict]:
     all_chunks = []
@@ -1011,7 +1248,6 @@ def chunk_paragraph(sections: list[dict], **_kw) -> list[dict]:
                                        "text": ct, "level": "child"})
     return all_chunks
 
-
 def chunk_lexicon(sections: list[dict], **_kw) -> list[dict]:
     result = []
     for sec in sections:
@@ -1035,15 +1271,18 @@ def chunk_lexicon(sections: list[dict], **_kw) -> list[dict]:
                                "text": combined, "level": "child"})
     return result
 
-
 CHUNK_STRATEGIES = {
     "section_aware": chunk_section_aware,
     "paragraph":     chunk_paragraph,
     "lexicon":       chunk_lexicon,
     "step_based":    chunk_section_aware,
     "fixed_semantic":chunk_section_aware,
+    "recommendation": chunk_section_aware,
+    "clinical_review": chunk_section_aware,
+    "human_factors": chunk_section_aware,
+    "dataset_paper": chunk_section_aware,
+    "landmark_review": chunk_paragraph,
 }
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  CHUNK TYPE INFERENCE
@@ -1052,8 +1291,19 @@ CHUNK_STRATEGIES = {
 def _infer_chunk_type(text: str, doc_config: dict) -> str:
     tl = text.lower()
     st = doc_config.get("source_type", "")
+    family = doc_config.get("doc_family", "")
     if st == "ontology":
         return "instrument_lexicon"
+    if family == "dataset_paper":
+        if any(k in tl for k in ["critical view of safety", "cvs prediction", "cvs criteria"]):
+            return "cvs_criteria"
+        if any(k in tl for k in ["annotation", "bounding box", "segmentation mask", "dataset", "benchmark"]):
+            return "instrument_lexicon"
+        return "general"
+    if family == "human_factors":
+        if any(k in tl for k in ["optical illusion", "visual perceptual illusion", "misidentification", "misperception"]):
+            return "risk_pitfall"
+        return "complication_management"
     if "critical view of safety" in tl or re.search(r"\bcvs\b", tl):
         return "cvs_criteria"
     if any(k in tl for k in ["subtotal cholecystectomy", "conversion to open",
@@ -1077,7 +1327,6 @@ def _infer_chunk_type(text: str, doc_config: dict) -> str:
                               "sign out", "safety check"]):
         return "safety_check"
     return "general"
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  CONTEXTUALIZED TEXT
@@ -1103,12 +1352,14 @@ def _build_contextualized_text(chunk: dict, doc_config: dict) -> str:
             tag_parts.append(f"{label}: {', '.join(tags[:5])}")
     if tag_parts:
         parts.append(f"[{' | '.join(tag_parts)}]")
+    hints = doc_config.get("tags_hint", [])
+    if hints:
+        parts.append(f"[Focus: {', '.join(hints[:4])}]")
     ps, pe = chunk.get("page_start"), chunk.get("page_end")
     if ps and pe:
         pg = f"Page {ps}" if ps == pe else f"Pages {ps}-{pe}"
         parts.append(f"[{pg}]")
     return " ".join(parts) + "\n" + chunk["text"]
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  HIERARCHICAL SUMMARIES
@@ -1142,7 +1393,8 @@ def _build_document_summary(sections: list[dict]) -> dict:
     for sec in sections[:10]:
         sents = sentence_split(sec["text"])
         if sents:
-            parts.append(f"{sec['title']}: {sents[0]}")
+            first = re.sub(rf"^\s*{re.escape(sec['title'])}\s*:\s*", "", sents[0], flags=re.IGNORECASE)
+            parts.append(f"{sec['title']}: {first}")
     summary = " ".join(parts)
     while count_tokens(summary) > PARENT_CHUNK_TOKENS:
         summary = " ".join(summary.split()[:-10])
@@ -1155,9 +1407,8 @@ def _build_document_summary(sections: list[dict]) -> dict:
         "level": "document_summary",
     }
 
-
 # ═══════════════════════════════════════════════════════════════════════
-#  PARENT-CHILD ID ASSIGNMENT  (Fix #2: span-based)
+#  PARENT-CHILD ID ASSIGNMENT 
 # ═══════════════════════════════════════════════════════════════════════
 
 def _assign_parent_child_ids(chunks: list[dict]):
@@ -1226,7 +1477,6 @@ def _assign_parent_child_ids(chunks: list[dict]):
                     child["sibling_ids"] = [s for s in cids
                                             if s != child["chunk_id"]]
 
-
 # ═══════════════════════════════════════════════════════════════════════
 #  MAIN PIPELINE
 # ═══════════════════════════════════════════════════════════════════════
@@ -1254,7 +1504,12 @@ def build_chunks_for_document(doc_config: dict) -> list[dict]:
     print(f"  {len(pages)} pages, {total_chars} chars")
 
     sections = detect_sections_with_pages(pages)
-    print(f"  {len(sections)} sections detected")
+    print(f"  {len(sections)} raw sections detected")
+    sections = filter_sections_for_document(sections, doc_config)
+    print(f"  {len(sections)} sections kept after document-aware filtering")
+    if not sections:
+        print("  [!] No usable sections after filtering - skipping")
+        return []
 
     strategy = doc_config.get("chunk_strategy", "section_aware")
     chunk_fn = CHUNK_STRATEGIES.get(strategy, chunk_section_aware)
@@ -1270,8 +1525,13 @@ def build_chunks_for_document(doc_config: dict) -> list[dict]:
           f"{len(sec_summaries)} sec summaries + 1 doc summary")
 
     enriched = []
+    seen_texts = set()
     for idx, rc in enumerate(all_raw):
         level = rc.get("level", "child")
+        normalized_text = re.sub(r"\s+", " ", rc["text"]).strip().lower()
+        if normalized_text in seen_texts:
+            continue
+        seen_texts.add(normalized_text)
         tags = extract_tags(rc["text"])
         chunk_type = _infer_chunk_type(rc["text"], doc_config)
 
@@ -1280,6 +1540,7 @@ def build_chunks_for_document(doc_config: dict) -> list[dict]:
             "doc_id":           doc_id,
             "doc_title":        doc_config["doc_title"],
             "source_type":      doc_config.get("source_type", "unknown"),
+            "doc_family":       doc_config.get("doc_family", "general"),
             "trust_tier":       doc_config.get("trust_tier", "B"),
             "collection":       doc_config.get("collection", "general"),
             "priority":         doc_config.get("priority", 3),
@@ -1308,10 +1569,9 @@ def build_chunks_for_document(doc_config: dict) -> list[dict]:
     _assign_parent_child_ids(enriched)
     return enriched
 
-
 def main():
     print("=" * 60)
-    print("BUILD CORPUS V3 - SurgRAG-VQA (Fixed)")
+    print("BUILD CORPUS - SurgRAG-VQA")
     print("=" * 60)
 
     all_chunks = []
@@ -1387,14 +1647,14 @@ def main():
     print(f"  Intro front-matter chunks: {intro_noise}")
 
     # ── Write ──
-    DOCS_CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
+    CHUNKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(CHUNKS_FILE, "w", encoding="utf-8") as f:
         for chunk in all_chunks:
             f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
 
     # ── Report ──
     print(f"\n{'='*60}")
-    print(f"DONE - Corpus V3")
+    print("DONE - Corpus build complete")
     print(f"{'='*60}")
     print(f"  Docs: {stats['processed']} ok, {stats['skipped']} skipped")
     print(f"  Total chunks: {stats['total']}")
@@ -1420,7 +1680,6 @@ def main():
             print(f"  Tags: anat={c['anatomy_tags'][:3]} risk={c['risk_tags'][:2]}")
             print(f"  Parent: {c.get('parent_id', '-')}")
             print(f"  Text: {c['text'][:100]}...")
-
 
 if __name__ == "__main__":
     main()
