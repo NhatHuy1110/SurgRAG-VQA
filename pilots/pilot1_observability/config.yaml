@@ -1,0 +1,63 @@
+paths:
+  # The registry is produced by scripts/build_endoscapes_registry.py.
+  registry_jsonl: data/endoscapes_work/registry_v0.jsonl
+  endoscapes_root: data/endoscapes
+  output_dir: pilots/pilot1_observability/outputs/pilot1
+
+sampling:
+  random_seed: 42
+  n_per_observability_stratum: 100
+  balance_cvs_state: true
+  cvs_state_targets:
+    no: 33
+    partial: 34
+    achieved: 33
+
+observability:
+  compute_on_all_registry_frames: true
+  construct_disagreement_alpha: 0.30
+  weights:
+    sharpness_log: 0.30
+    brightness_good: 0.20
+    contrast_good: 0.20
+    exposure_bad: -0.10
+    specular_frac: -0.10
+    red_dominance_frac: -0.10
+    spatial_signal: 0.20
+
+vqa:
+  max_new_tokens: 160
+  do_sample: false
+  trust_remote_code: true
+  torch_dtype: float16
+  models:
+    - id: qwen25_vl_7b
+      enabled: true
+      adapter: qwen_vl
+      model_name: Qwen/Qwen2.5-VL-7B-Instruct
+
+    - id: qwen2_vl_7b
+      enabled: false
+      adapter: qwen_vl
+      model_name: Qwen/Qwen2-VL-7B-Instruct
+
+    - id: llava15_7b
+      enabled: false
+      adapter: generic_hf
+      model_name: llava-hf/llava-1.5-7b-hf
+
+cvs_criteria:
+  # Official Endoscapes mapping:
+  # C1 = two and only two structures entering the gallbladder
+  # C2 = hepatocystic triangle clearance
+  # C3 = lower gallbladder separated from liver bed / cystic plate exposure
+  c1:
+    label: "two and only two structures entering the gallbladder"
+    question: "Are there two and only two structures clearly entering the gallbladder in this image?"
+  c2:
+    label: "hepatocystic triangle cleared"
+    question: "Is the hepatocystic triangle clearly cleared of fat and fibrous tissue in this image?"
+  c3:
+    label: "lower gallbladder separated from liver bed"
+    question: "Is the lower part of the gallbladder separated from the liver bed, with cystic plate exposure, in this image?"
+
